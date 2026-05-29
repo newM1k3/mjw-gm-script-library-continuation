@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Save, Plus, Tag, X, Info, AlertCircle } from 'lucide-react';
 import { AppState, Script, ScriptVersion, ScriptType, ScriptStatus } from '../types';
+import { AuthUser, canApproveVersions, displayNameForAuthUser } from '../lib/auth';
 import { useToast } from '../lib/useToast';
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
   editingScriptId: string | null;
   onSaveScript: (script: Script) => void;
   onSaveVersion: (version: ScriptVersion) => void;
+  currentUser: AuthUser | null;
   onSetCurrentVersion: (scriptId: string, versionId: string) => void;
 }
 
@@ -23,9 +25,10 @@ const scriptTypeOptions: { value: ScriptType; label: string }[] = [
   { value: 'training_note', label: 'Training Note' },
 ];
 
-export default function ScriptEditor({ state, editingScriptId, onSaveScript, onSaveVersion, onSetCurrentVersion }: Props) {
+export default function ScriptEditor({ state, editingScriptId, currentUser, onSaveScript, onSaveVersion, onSetCurrentVersion }: Props) {
   const { toast } = useToast();
   const existingScript = editingScriptId ? state.scripts.find((s) => s.id === editingScriptId) ?? null : null;
+  const canApprove = canApproveVersions(currentUser);
 
   const [scriptForm, setScriptForm] = useState({
     roomId: existingScript?.roomId ?? (state.rooms[0]?.id ?? ''),
@@ -48,7 +51,6 @@ export default function ScriptEditor({ state, editingScriptId, onSaveScript, onS
     versionNumber: '',
     requiredBlocksRaw: latestVersion?.requiredBlocks.join(', ') ?? '',
     optionalBlocksRaw: latestVersion?.optionalBlocks.join(', ') ?? '',
-    approvedBy: '',
     makeCurrentOnSave: false,
   });
 
@@ -107,13 +109,17 @@ export default function ScriptEditor({ state, editingScriptId, onSaveScript, onS
         optionalBlocks: versionForm.optionalBlocksRaw.split(',').map((s) => s.trim()).filter(Boolean),
         toneNotes: versionForm.toneNotes,
         changeSummary: versionForm.changeSummary || 'New version.',
-        approvalStatus: versionForm.makeCurrentOnSave ? 'approved' : 'draft',
-        approvedBy: versionForm.approvedBy,
-        approvedAt: versionForm.makeCurrentOnSave ? now : null,
+        approvalStatus: versionForm.makeCurrentOnSave && canApprove ? 'approved' : 'draft',
+        approvedBy: versionForm.makeCurrentOnSave && canApprove ? displayNameForAuthUser(currentUser) : '',
+        approvedAt: versionForm.makeCurrentOnSave && canApprove ? now : null,
         createdAt: now,
+        createdBy: currentUser?.staffMemberId,
+        submittedBy: currentUser?.staffMemberId,
+        reviewedBy: versionForm.makeCurrentOnSave && canApprove ? currentUser?.staffMemberId : undefined,
+        previousVersionId: latestVersion?.id ?? null,
       };
       onSaveVersion(version);
-      if (versionForm.makeCurrentOnSave) onSetCurrentVersion(script.id, version.id);
+      if (versionForm.makeCurrentOnSave && canApprove) onSetCurrentVersion(script.id, version.id);
       toast(existingScript ? `"${script.title}" updated with v${vn}` : `"${script.title}" created with v${vn}`);
     } else {
       toast(existingScript ? `"${script.title}" metadata saved` : `"${script.title}" created`);
@@ -234,12 +240,11 @@ export default function ScriptEditor({ state, editingScriptId, onSaveScript, onS
               <label className="block text-xs font-medium text-slate-400 mb-1">Change Summary</label>
               <input className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500" placeholder="Briefly describe what changed in this version..." value={versionForm.changeSummary} onChange={(e) => setVersionForm((f) => ({ ...f, changeSummary: e.target.value }))} />
             </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">Approved By</label>
-              <input className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500" placeholder="e.g. Manager, Owner" value={versionForm.approvedBy} onChange={(e) => setVersionForm((f) => ({ ...f, approvedBy: e.target.value }))} />
+            <div className="rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-2 text-xs text-slate-400">
+              Approval identity: <span className="text-slate-200">{displayNameForAuthUser(currentUser)}</span>. Only Managers and Owners can approve and publish a current version.
             </div>
-            <label className="flex items-center gap-3 cursor-pointer group">
-              <input type="checkbox" className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-800" checked={versionForm.makeCurrentOnSave} onChange={(e) => setVersionForm((f) => ({ ...f, makeCurrentOnSave: e.target.checked }))} />
+            <label className={`flex items-center gap-3 ${canApprove ? 'cursor-pointer group' : 'cursor-not-allowed opacity-60'}`}>
+              <input type="checkbox" disabled={!canApprove} className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-800" checked={versionForm.makeCurrentOnSave && canApprove} onChange={(e) => setVersionForm((f) => ({ ...f, makeCurrentOnSave: e.target.checked }))} />
               <span className="text-sm text-slate-300 group-hover:text-slate-100 transition-colors">Mark as current approved version on save</span>
             </label>
             <div className="flex items-start gap-2 p-3 bg-blue-950/30 border border-blue-800/40 rounded-lg text-xs text-blue-300/80">

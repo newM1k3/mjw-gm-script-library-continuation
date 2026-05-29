@@ -14,6 +14,7 @@ import {
   StaffMember,
 } from '../types';
 import { sampleData } from '../data/sampleData';
+import { AuthStatus, AuthUser, LoginCredentials, normalizePermissionLevel } from './auth';
 
 export type DataMode = 'demo' | 'pocketbase';
 
@@ -50,6 +51,9 @@ export interface PersistenceAdapter {
   recordAuditEvent(event: AuditEvent): Promise<void>;
   loadAuditMetadata(): Promise<AuditMetadata>;
   saveAuditMetadata(metadata: AuditMetadata): Promise<void>;
+  getAuthStatus(): AuthStatus;
+  login?(credentials: LoginCredentials): Promise<AuthStatus>;
+  logout?(): Promise<void>;
 }
 
 const STORAGE_KEY = 'gm_script_library_v1';
@@ -64,6 +68,19 @@ const emptyState: AppState = {
   staffMembers: [],
   acknowledgements: [],
   auditEvents: [],
+};
+
+const demoAuthStatus: AuthStatus = {
+  isAuthenticated: true,
+  user: {
+    authUserId: 'demo-user',
+    name: 'Demo Manager',
+    email: 'demo@example.local',
+    role: 'Demo Manager',
+    permissionLevel: 'owner',
+    staffMemberId: 'staff_1',
+    isAuthenticated: true,
+  },
 };
 
 function normalizeState(state: Partial<AppState> | null | undefined): AppState {
@@ -183,6 +200,9 @@ export const localStorageAdapter: PersistenceAdapter = {
   async saveAuditMetadata(metadata) {
     writeLocalAuditMetadata(metadata);
   },
+  getAuthStatus() {
+    return demoAuthStatus;
+  },
 };
 
 type PocketBaseRecord = Record<string, unknown> & {
@@ -297,6 +317,33 @@ async function withPocketBaseErrors<T>(collectionName: string, action: string, o
   } catch (error) {
     throw describePocketBaseError(error, collectionName, action);
   }
+}
+
+function mapAuthModelToUser(model: Record<string, unknown> | null | undefined): AuthUser | null {
+  if (!model) return null;
+  const authUserId = asString(model.id);
+  if (!authUserId) return null;
+
+  const fallbackName = asString(model.email, 'Authenticated user');
+  const name = asString(model.name, asString(model.username, fallbackName));
+
+  return {
+    authUserId,
+    email: optionalField(model as PocketBaseRecord, 'email'),
+    name,
+    role: optionalField(model as PocketBaseRecord, 'role'),
+    permissionLevel: normalizePermissionLevel(model.permissionLevel, 'viewer'),
+    staffMemberId: optionalField(model as PocketBaseRecord, 'staffId'),
+    isAuthenticated: true,
+  };
+}
+
+function getPocketBaseAuthStatus(pb: PocketBase): AuthStatus {
+  const user = mapAuthModelToUser(pb.authStore.model as Record<string, unknown> | null | undefined);
+  return {
+    user,
+    isAuthenticated: pb.authStore.isValid && Boolean(user),
+  };
 }
 
 export function mapPocketBaseRoom(record: PocketBaseRecord): Room {
@@ -507,6 +554,18 @@ function createPocketBaseAdapter(url: string): PersistenceAdapter {
     mode: 'pocketbase',
     label: 'PocketBase',
     isDemo: false,
+    getAuthStatus() {
+      return getPocketBaseAuthStatus(pb);
+    },
+    async login(credentials) {
+      await withPocketBaseErrors('users', 'login', async () => {
+        await pb.collection('users').authWithPassword(credentials.email, credentials.password);
+      });
+      return getPocketBaseAuthStatus(pb);
+    },
+    async logout() {
+      pb.authStore.clear();
+    },
     async loadAppState() {
       const [
         rooms,

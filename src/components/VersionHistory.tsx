@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { CheckCircle, Clock, Archive, ChevronDown, ChevronUp, Star } from 'lucide-react';
 import { AppState } from '../types';
+import { AuthUser, canApproveVersions } from '../lib/auth';
 import { useToast } from '../lib/useToast';
 import ConfirmModal from './ConfirmModal';
 
 interface Props {
   state: AppState;
+  currentUser: AuthUser | null;
   onSetCurrentVersion: (scriptId: string, versionId: string) => void;
 }
 
@@ -16,11 +18,12 @@ interface PendingMakeCurrent {
   scriptTitle: string;
 }
 
-export default function VersionHistory({ state, onSetCurrentVersion }: Props) {
+export default function VersionHistory({ state, currentUser, onSetCurrentVersion }: Props) {
   const { toast } = useToast();
   const [expandedScript, setExpandedScript] = useState<string | null>(null);
   const [filterRoom, setFilterRoom] = useState('all');
   const [pendingMakeCurrent, setPendingMakeCurrent] = useState<PendingMakeCurrent | null>(null);
+  const canApprove = canApproveVersions(currentUser);
 
   const filteredScripts = state.scripts.filter((s) => filterRoom === 'all' || s.roomId === filterRoom);
 
@@ -136,9 +139,9 @@ export default function VersionHistory({ state, onSetCurrentVersion }: Props) {
                               </div>
                               {!isCurrent && (
                                 <button
-                                  onClick={() => setPendingMakeCurrent({ scriptId: script.id, versionId: version.id, versionNumber: version.versionNumber, scriptTitle: script.title })}
+                                  onClick={() => canApprove ? setPendingMakeCurrent({ scriptId: script.id, versionId: version.id, versionNumber: version.versionNumber, scriptTitle: script.title }) : toast('Manager or Owner permission is required to make a version current.')}
                                   aria-label={`Make v${version.versionNumber} current for ${script.title}`}
-                                  className="flex-shrink-0 px-3 py-1.5 text-xs bg-emerald-900/40 border border-emerald-700/50 text-emerald-300 rounded-lg hover:bg-emerald-800/50 transition-colors"
+                                  className={`flex-shrink-0 px-3 py-1.5 text-xs rounded-lg border transition-colors ${canApprove ? 'bg-emerald-900/40 border-emerald-700/50 text-emerald-300 hover:bg-emerald-800/50' : 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed'}`}
                                 >
                                   Make Current
                                 </button>

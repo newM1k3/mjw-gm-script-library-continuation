@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, DoorOpen, BookOpen, File as FileEdit, History, Mic, Layers, Volume2, Users, ShieldCheck, Download, Menu, X, Clock } from 'lucide-react';
+import { LayoutDashboard, DoorOpen, BookOpen, File as FileEdit, History, Mic, Layers, Volume2, Users, ShieldCheck, Download, Menu, X, Clock, LogOut } from 'lucide-react';
 
 import { AppState, Room, Script, ScriptVersion, HintLadder, PronunciationTerm, StaffMember, Acknowledgement } from './types';
+import { AuthUser, canManageData, linkAuthUserToStaff } from './lib/auth';
 import { dataAdapter, initialEmptyAppState } from './lib/dataAdapter';
 import { ToastProvider } from './lib/toast';
 
@@ -16,6 +17,8 @@ import PronunciationGuide from './components/PronunciationGuide';
 import StaffAcknowledgements from './components/StaffAcknowledgements';
 import ReadinessAudit from './components/ReadinessAudit';
 import ExportCenter from './components/ExportCenter';
+import LoginPanel from './components/LoginPanel';
+import AuthorizationNotice from './components/AuthorizationNotice';
 
 type Screen =
   | 'dashboard'
@@ -52,11 +55,24 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => dataAdapter.getAuthStatus().user);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isLoginSubmitting, setIsLoginSubmitting] = useState(false);
+
+  const currentUser = linkAuthUserToStaff(authUser, state.staffMembers);
+  const isProductionUnauthenticated = !dataAdapter.isDemo && !currentUser?.isAuthenticated;
+  const canManage = canManageData(currentUser);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadState() {
+      if (!dataAdapter.isDemo && !authUser?.isAuthenticated) {
+        setState(initialEmptyAppState);
+        setIsLoading(false);
+        return;
+      }
+
       setIsLoading(true);
       setLoadError(null);
       try {
@@ -76,10 +92,10 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authUser]);
 
   useEffect(() => {
-    if (isLoading || loadError) return;
+    if (isLoading || loadError || isProductionUnauthenticated) return;
 
     let cancelled = false;
 
@@ -98,7 +114,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [isLoading, loadError, state]);
+  }, [isLoading, loadError, isProductionUnauthenticated, state]);
 
   function navigate(s: string) {
     setScreen(s as Screen);
@@ -108,6 +124,29 @@ export default function App() {
   function navigateToEditor(scriptId?: string) {
     setEditingScriptId(scriptId ?? null);
     setScreen('editor');
+  }
+
+  async function handleLogin(email: string, password: string) {
+    if (!dataAdapter.login) return;
+    setIsLoginSubmitting(true);
+    setAuthError(null);
+    try {
+      const authStatus = await dataAdapter.login({ email, password });
+      if (!authStatus.user) throw new Error('PocketBase accepted the login but did not return an authenticated user.');
+      setAuthUser(authStatus.user);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Unable to sign in. Check your email and password.');
+    } finally {
+      setIsLoginSubmitting(false);
+    }
+  }
+
+  async function handleLogout() {
+    if (dataAdapter.logout) await dataAdapter.logout();
+    setAuthUser(null);
+    setState(initialEmptyAppState);
+    setScreen('dashboard');
+    setEditingScriptId(null);
   }
 
   function addRoom(room: Room) {
@@ -192,6 +231,19 @@ export default function App() {
 
   const isGMMode = screen === 'gm';
   const isAppEmpty = Object.values(state).every((collection) => collection.length === 0);
+
+  if (isProductionUnauthenticated) {
+    return (
+      <ToastProvider>
+        <LoginPanel
+          appLabel={dataAdapter.label}
+          error={authError}
+          isSubmitting={isLoginSubmitting}
+          onLogin={handleLogin}
+        />
+      </ToastProvider>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -318,12 +370,26 @@ export default function App() {
                       Demo Mode
                     </span>
                   )}
+                  {currentUser && (
+                    <span className="hidden sm:inline-flex rounded-full border border-slate-700 bg-slate-800 px-2 py-1 text-slate-300">
+                      {currentUser.name} · {currentUser.permissionLevel}
+                    </span>
+                  )}
                   <span aria-live="polite">
                     {saveStatus === 'saving' && 'Saving…'}
                     {saveStatus === 'saved' && 'Saved'}
                     {saveStatus === 'error' && 'Save failed'}
                     {saveStatus === 'idle' && dataAdapter.label}
                   </span>
+                  {!dataAdapter.isDemo && (
+                    <button
+                      type="button"
+                      onClick={() => void handleLogout()}
+                      className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-slate-300 hover:bg-slate-700"
+                    >
+                      <LogOut className="w-3 h-3" /> Logout
+                    </button>
+                  )}
                 </div>
               </header>
 
@@ -355,40 +421,58 @@ export default function App() {
                     <Dashboard state={state} onNavigate={navigate} />
                   )}
                   {screen === 'rooms' && (
-                    <RoomSetup state={state} onAddRoom={addRoom} onUpdateRoom={updateRoom} />
+                    canManage ? (
+                      <RoomSetup state={state} onAddRoom={addRoom} onUpdateRoom={updateRoom} />
+                    ) : (
+                      <AuthorizationNotice title="Manager access required" message="Room setup changes are protected in production. Ask an Owner or Manager to update room records." />
+                    )
                   )}
                   {screen === 'scripts' && (
                     <ScriptLibrary state={state} onNavigateToEditor={navigateToEditor} />
                   )}
                   {screen === 'editor' && (
-                    <ScriptEditor
-                      state={state}
-                      editingScriptId={editingScriptId}
-                      onSaveScript={saveScript}
-                      onSaveVersion={saveVersion}
-                      onSetCurrentVersion={setCurrentVersion}
-                    />
+                    canManage ? (
+                      <ScriptEditor
+                        state={state}
+                        editingScriptId={editingScriptId}
+                        currentUser={currentUser}
+                        onSaveScript={saveScript}
+                        onSaveVersion={saveVersion}
+                        onSetCurrentVersion={setCurrentVersion}
+                      />
+                    ) : (
+                      <AuthorizationNotice title="Manager access required" message="Creating, editing, approving, and publishing scripts requires Manager or Owner permissions." />
+                    )
                   )}
                   {screen === 'history' && (
-                    <VersionHistory state={state} onSetCurrentVersion={setCurrentVersion} />
+                    <VersionHistory state={state} currentUser={currentUser} onSetCurrentVersion={setCurrentVersion} />
                   )}
                   {screen === 'hints' && (
-                    <HintLadders
-                      state={state}
-                      onAddLadder={addHintLadder}
-                      onUpdateLadder={updateHintLadder}
-                    />
+                    canManage ? (
+                      <HintLadders
+                        state={state}
+                        onAddLadder={addHintLadder}
+                        onUpdateLadder={updateHintLadder}
+                      />
+                    ) : (
+                      <AuthorizationNotice title="Manager access required" message="Hint ladder editing is protected so operational puzzle support stays controlled." />
+                    )
                   )}
                   {screen === 'pronunciation' && (
-                    <PronunciationGuide
-                      state={state}
-                      onAddTerm={addPronunciationTerm}
-                      onUpdateTerm={updatePronunciationTerm}
-                    />
+                    canManage ? (
+                      <PronunciationGuide
+                        state={state}
+                        onAddTerm={addPronunciationTerm}
+                        onUpdateTerm={updatePronunciationTerm}
+                      />
+                    ) : (
+                      <AuthorizationNotice title="Manager access required" message="Pronunciation guide editing is protected in production. Staff can still read scripts in GM mode." />
+                    )
                   )}
                   {screen === 'acknowledgements' && (
                     <StaffAcknowledgements
                       state={state}
+                      currentUser={currentUser}
                       onAcknowledge={addAcknowledgement}
                       onAddStaff={addStaffMember}
                     />
@@ -397,11 +481,15 @@ export default function App() {
                     <ReadinessAudit state={state} />
                   )}
                   {screen === 'export' && (
-                    <ExportCenter
-                      state={state}
-                      isDemoMode={dataAdapter.isDemo}
-                      onRestoreDemoData={dataAdapter.resetDemoData ? restoreDemoData : undefined}
-                    />
+                    canManage ? (
+                      <ExportCenter
+                        state={state}
+                        isDemoMode={dataAdapter.isDemo}
+                        onRestoreDemoData={dataAdapter.resetDemoData ? restoreDemoData : undefined}
+                      />
+                    ) : (
+                      <AuthorizationNotice title="Manager access required" message="Exports can include operational scripts and training data, so this screen is limited to Managers and Owners." />
+                    )
                   )}
                 </div>
               </main>

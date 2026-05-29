@@ -1,19 +1,22 @@
 import { useState } from 'react';
 import { CheckCircle, Clock, AlertTriangle, User, Plus } from 'lucide-react';
-import { AppState, Acknowledgement, StaffMember } from '../types';
+import { AppState, Acknowledgement, StaffMember, StaffPermissionLevel } from '../types';
+import { AuthUser, canAcknowledgeForStaff, canManageData } from '../lib/auth';
 import { useToast } from '../lib/useToast';
 
 interface Props {
   state: AppState;
+  currentUser: AuthUser | null;
   onAcknowledge: (ack: Acknowledgement) => void;
   onAddStaff: (staff: StaffMember) => void;
 }
 
-export default function StaffAcknowledgements({ state, onAcknowledge, onAddStaff }: Props) {
+export default function StaffAcknowledgements({ state, currentUser, onAcknowledge, onAddStaff }: Props) {
   const { toast } = useToast();
   const [filterRoom, setFilterRoom] = useState(state.rooms[0]?.id ?? 'all');
   const [addingStaff, setAddingStaff] = useState(false);
-  const [staffForm, setStaffForm] = useState({ name: '', role: '', notes: '' });
+  const [staffForm, setStaffForm] = useState({ name: '', email: '', authUserId: '', role: '', permissionLevel: 'gm' as StaffPermissionLevel, notes: '' });
+  const canManageStaff = canManageData(currentUser);
 
   const currentScripts = state.scripts.filter((s) => {
     if (!s.currentVersionId) return false;
@@ -21,9 +24,24 @@ export default function StaffAcknowledgements({ state, onAcknowledge, onAddStaff
   });
 
   function handleAcknowledge(staffId: string, scriptId: string, versionId: string, staffName: string, scriptTitle: string) {
+    if (!canAcknowledgeForStaff(currentUser, staffId)) {
+      toast('You can only acknowledge scripts for your linked staff profile unless you are a Manager or Owner.');
+      return;
+    }
+
     const existing = state.acknowledgements.find((a) => a.staffId === staffId && a.scriptId === scriptId && a.versionId === versionId);
     if (existing) return;
-    onAcknowledge({ id: `ack_${Date.now()}`, staffId, scriptId, versionId, acknowledgedAt: new Date().toISOString(), notes: '' });
+    onAcknowledge({
+      id: `ack_${Date.now()}`,
+      staffId,
+      scriptId,
+      versionId,
+      acknowledgedAt: new Date().toISOString(),
+      acknowledgementTextSnapshot: 'Staff member confirmed they reviewed and understood the current approved script version.',
+      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
+      source: canManageStaff && currentUser?.staffMemberId !== staffId ? 'manager_review' : 'staff_training',
+      notes: '',
+    });
     toast(`${staffName} acknowledged "${scriptTitle}"`);
   }
 
@@ -35,10 +53,25 @@ export default function StaffAcknowledgements({ state, onAcknowledge, onAddStaff
   }
 
   function handleAddStaff() {
+    if (!canManageStaff) {
+      toast('Manager or Owner permission is required to add staff members.');
+      return;
+    }
     if (!staffForm.name.trim()) return;
     const name = staffForm.name.trim();
-    onAddStaff({ id: `staff_${Date.now()}`, name, role: staffForm.role.trim() || 'Game Master', active: true, notes: staffForm.notes.trim() });
-    setStaffForm({ name: '', role: '', notes: '' });
+    onAddStaff({
+      id: `staff_${Date.now()}`,
+      name,
+      email: staffForm.email.trim() || undefined,
+      authUserId: staffForm.authUserId.trim() || null,
+      role: staffForm.role.trim() || 'Game Master',
+      permissionLevel: staffForm.permissionLevel,
+      active: true,
+      invitedAt: new Date().toISOString(),
+      lastLoginAt: null,
+      notes: staffForm.notes.trim(),
+    });
+    setStaffForm({ name: '', email: '', authUserId: '', role: '', permissionLevel: 'gm', notes: '' });
     setAddingStaff(false);
     toast(`${name} added to staff`);
   }
@@ -70,13 +103,13 @@ export default function StaffAcknowledgements({ state, onAcknowledge, onAddStaff
             <option value="all">All Rooms</option>
             {state.rooms.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
-          <button
+          {canManageStaff && <button
             onClick={() => setAddingStaff(!addingStaff)}
             aria-label="Add staff member"
             className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm transition-colors"
           >
             <Plus className="w-4 h-4" /> Staff
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -100,26 +133,45 @@ export default function StaffAcknowledgements({ state, onAcknowledge, onAddStaff
       {addingStaff && (
         <div className="bg-slate-800/80 border border-slate-600 rounded-xl p-5 space-y-4">
           <h3 className="text-sm font-semibold text-slate-300">Add Staff Member</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">Name *</label>
-              <input
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                placeholder="First name or display name"
-                value={staffForm.name}
-                onChange={(e) => setStaffForm((f) => ({ ...f, name: e.target.value }))}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleAddStaff(); }}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">Role</label>
-              <input
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                placeholder="Game Master, Operations Lead..."
-                value={staffForm.role}
-                onChange={(e) => setStaffForm((f) => ({ ...f, role: e.target.value }))}
-              />
-            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1">Name *</label>
+                <input
+                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  placeholder="First name or display name"
+                  value={staffForm.name}
+                  onChange={(e) => setStaffForm((f) => ({ ...f, name: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleAddStaff(); }}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1">Role</label>
+                <input
+                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  placeholder="Game Master, Operations Lead..."
+                  value={staffForm.role}
+                  onChange={(e) => setStaffForm((f) => ({ ...f, role: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1">Email</label>
+                <input className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500" placeholder="staff@example.com" value={staffForm.email} onChange={(e) => setStaffForm((f) => ({ ...f, email: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1">Auth User ID</label>
+                <input className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500" placeholder="PocketBase users record ID" value={staffForm.authUserId} onChange={(e) => setStaffForm((f) => ({ ...f, authUserId: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1">Permission Level</label>
+                <select className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500" value={staffForm.permissionLevel} onChange={(e) => setStaffForm((f) => ({ ...f, permissionLevel: e.target.value as StaffPermissionLevel }))}>
+                  <option value="owner">Owner/Admin</option>
+                  <option value="manager">Manager</option>
+                  <option value="lead_gm">Lead GM</option>
+                  <option value="gm">GM/Staff</option>
+                  <option value="trainee">Trainee</option>
+                  <option value="viewer">Viewer</option>
+                </select>
+              </div>
           </div>
           <div className="flex gap-3">
             <button
@@ -138,9 +190,9 @@ export default function StaffAcknowledgements({ state, onAcknowledge, onAddStaff
         <div className="flex flex-col items-center justify-center py-16 bg-slate-800/30 border border-dashed border-slate-700 rounded-xl">
           <User className="w-10 h-10 text-slate-600 mb-3" />
           <p className="text-slate-400">No staff members yet</p>
-          <button onClick={() => setAddingStaff(true)} className="mt-4 flex items-center gap-2 px-4 py-2 bg-blue-700 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors">
+          {canManageStaff && <button onClick={() => setAddingStaff(true)} className="mt-4 flex items-center gap-2 px-4 py-2 bg-blue-700 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors">
             <Plus className="w-4 h-4" /> Add Staff
-          </button>
+          </button>}
         </div>
       ) : (
         <div className="space-y-4">
@@ -198,7 +250,8 @@ export default function StaffAcknowledgements({ state, onAcknowledge, onAddStaff
                               <button
                                 onClick={() => handleAcknowledge(staff.id, script.id, script.currentVersionId!, staff.name, script.title)}
                                 aria-label={`Mark ${staff.name} acknowledged for ${script.title}`}
-                                className="px-3 py-1 bg-emerald-900/40 border border-emerald-700/50 text-emerald-300 text-xs rounded-lg hover:bg-emerald-800/50 transition-colors"
+                                disabled={!canAcknowledgeForStaff(currentUser, staff.id)}
+                                className={`px-3 py-1 border text-xs rounded-lg transition-colors ${canAcknowledgeForStaff(currentUser, staff.id) ? 'bg-emerald-900/40 border-emerald-700/50 text-emerald-300 hover:bg-emerald-800/50' : 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed'}`}
                               >
                                 Acknowledge
                               </button>
