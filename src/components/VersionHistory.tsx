@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { CheckCircle, Clock, Archive, ChevronDown, ChevronUp, Star } from 'lucide-react';
 import { AppState } from '../types';
-import { useToast } from '../lib/toast';
+import { useToast } from '../lib/useToast';
 import ConfirmModal from './ConfirmModal';
 
 interface Props {

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Plus, CreditCard as Edit2, Save, X, Clock, Star, Info } from 'lucide-react';
 import { Room, RoomStatus, RoomDifficulty, AppState } from '../types';
-import { useToast } from '../lib/toast';
+import { useToast } from '../lib/useToast';
 
 interface Props {
   state: AppState;

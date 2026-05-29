@@ -1,4 +1,4 @@
-import { AppState, Room, ScriptReadinessResult } from '../types';
+import { AppState, ScriptReadinessResult } from '../types';
 import { runAudit } from '../lib/scriptAudit';
 
 export function exportRoomJSON(state: AppState, roomId: string): string {

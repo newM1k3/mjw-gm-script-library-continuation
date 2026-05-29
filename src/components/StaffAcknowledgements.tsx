@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { CheckCircle, Clock, AlertTriangle, User, Plus } from 'lucide-react';
 import { AppState, Acknowledgement, StaffMember } from '../types';
-import { useToast } from '../lib/toast';
+import { useToast } from '../lib/useToast';
 
 interface Props {
   state: AppState;

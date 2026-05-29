@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Download, Copy, CheckCircle, FileJson, FileText, Info, RotateCcw } from 'lucide-react';
+import { Download, Copy, FileJson, FileText, Info, RotateCcw } from 'lucide-react';
 import { AppState } from '../types';
 import { exportRoomJSON, exportRoomMarkdown, downloadFile } from '../services/exporters';
 import { resetToSampleData } from '../lib/storage';
-import { useToast } from '../lib/toast';
+import { useToast } from '../lib/useToast';
 import ConfirmModal from './ConfirmModal';
 
 interface Props {

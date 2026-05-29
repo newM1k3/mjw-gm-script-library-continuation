@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Save, Plus, Tag, X, Info, AlertCircle } from 'lucide-react';
 import { AppState, Script, ScriptVersion, ScriptType, ScriptStatus } from '../types';
-import { useToast } from '../lib/toast';
+import { useToast } from '../lib/useToast';
 
 interface Props {
   state: AppState;
@@ -56,7 +56,7 @@ export default function ScriptEditor({ state, editingScriptId, onSaveScript, onS
     if (existingScript) {
       setScriptForm({ roomId: existingScript.roomId, title: existingScript.title, scriptType: existingScript.scriptType, audience: existingScript.audience, tags: existingScript.tags });
     }
-  }, [editingScriptId]);
+  }, [existingScript]);
 
   function addTag() {
     const t = tagInput.trim().toLowerCase();
