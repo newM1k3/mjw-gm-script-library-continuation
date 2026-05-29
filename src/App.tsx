@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { LayoutDashboard, DoorOpen, BookOpen, File as FileEdit, History, Mic, Layers, Volume2, Users, ShieldCheck, Download, Menu, X, Clock, LogOut } from 'lucide-react';
 
-import { AppState, Room, Script, ScriptVersion, HintLadder, PronunciationTerm, StaffMember, Acknowledgement } from './types';
+import { AppState, Room, Script, ScriptVersion, HintLadder, PronunciationTerm, StaffMember, Acknowledgement, AuditEvent } from './types';
 import { AuthUser, canManageData, linkAuthUserToStaff } from './lib/auth';
+import { markScriptAcknowledgementsSuperseded } from './lib/acknowledgements';
 import { dataAdapter, initialEmptyAppState } from './lib/dataAdapter';
 import { ToastProvider } from './lib/toast';
 
@@ -190,6 +191,7 @@ export default function App() {
           ? { ...v, approvalStatus: v.id === versionId ? 'approved' : v.approvalStatus }
           : v
       ),
+      acknowledgements: markScriptAcknowledgementsSuperseded(s.acknowledgements, scriptId, versionId),
     }));
   }
 
@@ -215,8 +217,22 @@ export default function App() {
     }));
   }
 
-  function addAcknowledgement(ack: Acknowledgement) {
-    setState((s) => ({ ...s, acknowledgements: [...s.acknowledgements, ack] }));
+  async function addAcknowledgement(ack: Acknowledgement, auditEvent: AuditEvent) {
+    if (dataAdapter.createAcknowledgement) {
+      const persisted = await dataAdapter.createAcknowledgement(ack, auditEvent);
+      setState((s) => ({
+        ...s,
+        acknowledgements: [...s.acknowledgements, persisted.acknowledgement],
+        auditEvents: [...(s.auditEvents ?? []), persisted.auditEvent],
+      }));
+      return;
+    }
+
+    setState((s) => ({
+      ...s,
+      acknowledgements: [...s.acknowledgements, ack],
+      auditEvents: [...(s.auditEvents ?? []), auditEvent],
+    }));
   }
 
   function addStaffMember(staff: StaffMember) {

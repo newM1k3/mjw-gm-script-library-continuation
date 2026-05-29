@@ -46,6 +46,7 @@ export interface PersistenceAdapter {
   saveStaffMembers(staffMembers: StaffMember[]): Promise<void>;
   loadAcknowledgements(): Promise<Acknowledgement[]>;
   saveAcknowledgements(acknowledgements: Acknowledgement[]): Promise<void>;
+  createAcknowledgement?(acknowledgement: Acknowledgement, auditEvent: AuditEvent): Promise<{ acknowledgement: Acknowledgement; auditEvent: AuditEvent }>;
   loadAuditEvents(): Promise<AuditEvent[]>;
   saveAuditEvents(auditEvents: AuditEvent[]): Promise<void>;
   recordAuditEvent(event: AuditEvent): Promise<void>;
@@ -184,6 +185,14 @@ export const localStorageAdapter: PersistenceAdapter = {
   },
   async saveAcknowledgements(acknowledgements) {
     updateLocalState((state) => ({ ...state, acknowledgements }));
+  },
+  async createAcknowledgement(acknowledgement, auditEvent) {
+    updateLocalState((state) => ({
+      ...state,
+      acknowledgements: [...state.acknowledgements, acknowledgement],
+      auditEvents: [...(state.auditEvents ?? []), auditEvent],
+    }));
+    return { acknowledgement, auditEvent };
   },
   async loadAuditEvents() {
     return readLocalState().auditEvents ?? [];
@@ -455,7 +464,7 @@ export function mapPocketBaseAcknowledgement(record: PocketBaseRecord): Acknowle
     staffId: asString(record.staffId),
     scriptId: asString(record.scriptId),
     versionId: asString(record.versionId),
-    acknowledgedAt: asString(record.acknowledgedAt),
+    acknowledgedAt: asString(record.acknowledgedAt) || asString(record.created),
     acknowledgementTextSnapshot: optionalField(record, 'acknowledgementTextSnapshot'),
     ipAddress: optionalField(record, 'ipAddress'),
     userAgent: optionalField(record, 'userAgent'),
@@ -649,6 +658,30 @@ function createPocketBaseAdapter(url: string): PersistenceAdapter {
     },
     async saveAcknowledgements(acknowledgements) {
       await saveCollection(pb, collections.acknowledgements, acknowledgements);
+    },
+    async createAcknowledgement(acknowledgement, auditEvent) {
+      return withPocketBaseErrors(collections.acknowledgements, 'create acknowledgement', async () => {
+        const createdAcknowledgement = await pb
+          .collection(collections.acknowledgements)
+          .create<PocketBaseRecord>(toPocketBaseRecord(acknowledgement));
+        const serverAcknowledgedAt = createdAcknowledgement.created ?? acknowledgement.acknowledgedAt;
+        const timestampedAcknowledgement = await pb
+          .collection(collections.acknowledgements)
+          .update<PocketBaseRecord>(createdAcknowledgement.id, { acknowledgedAt: serverAcknowledgedAt });
+
+        const createdAuditEvent = await pb
+          .collection(collections.auditEvents)
+          .create<PocketBaseRecord>(toPocketBaseRecord({ ...auditEvent, createdAt: serverAcknowledgedAt }));
+        const serverAuditCreatedAt = createdAuditEvent.created ?? serverAcknowledgedAt;
+        const timestampedAuditEvent = await pb
+          .collection(collections.auditEvents)
+          .update<PocketBaseRecord>(createdAuditEvent.id, { createdAt: serverAuditCreatedAt });
+
+        return {
+          acknowledgement: mapPocketBaseAcknowledgement(timestampedAcknowledgement),
+          auditEvent: mapPocketBaseAuditEvent(timestampedAuditEvent),
+        };
+      });
     },
     async loadAuditEvents() {
       return loadCollection(pb, collections.auditEvents, mapPocketBaseAuditEvent, '-created');

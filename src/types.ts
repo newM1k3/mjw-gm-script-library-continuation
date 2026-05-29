@@ -29,6 +29,38 @@ export type StaffPermissionLevel = 'owner' | 'manager' | 'lead_gm' | 'gm' | 'tra
 
 export type AcknowledgementSource = 'gm_mode' | 'staff_training' | 'manager_review' | 'import' | 'manual';
 
+export type AcknowledgementStatus = 'current' | 'outdated' | 'not_acknowledged' | 'revoked' | 'superseded';
+
+export interface AcknowledgementReportFilters {
+  roomId?: string;
+  staffId?: string;
+  role?: string;
+  status?: AcknowledgementStatus | 'all';
+  scriptType?: ScriptType | 'all';
+}
+
+export interface AcknowledgementReportRow {
+  roomId: string;
+  roomName: string;
+  staffId: string;
+  staffName: string;
+  staffRole: string;
+  permissionLevel: StaffPermissionLevel;
+  scriptId: string;
+  scriptTitle: string;
+  scriptType: ScriptType;
+  currentVersionId: string | null;
+  currentVersionNumber: string;
+  approvalDate: string | null;
+  requiredBlocks: string[];
+  status: AcknowledgementStatus;
+  acknowledgementId: string | null;
+  acknowledgedAt: string | null;
+  acknowledgementTextSnapshot: string | null;
+  source: AcknowledgementSource | null;
+  notes: string;
+}
+
 export type AuditEventAction =
   | 'create'
   | 'update'
