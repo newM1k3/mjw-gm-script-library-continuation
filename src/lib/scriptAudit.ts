@@ -9,7 +9,7 @@ function makeIssue(
   description: string,
   recommendation: string
 ): ScriptReadinessIssue {
-  return { id: `issue_${++issueCounter}`, roomId, severity, category, description, recommendation };
+  return { id: `issue_${roomId}_${++issueCounter}`, roomId, severity, category, description, recommendation };
 }
 
 export function runAudit(state: AppState, room: Room): ScriptReadinessResult {

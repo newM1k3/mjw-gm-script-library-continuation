@@ -66,6 +66,7 @@ export function exportRoomMarkdown(state: AppState, roomId: string): string {
   const lines: string[] = [];
 
   lines.push(`# GM Script Library — Room Script Packet`);
+  lines.push(`**Schema Version:** 1.0`);
   lines.push(`**Room:** ${room.name}`);
   lines.push(`**Theme:** ${room.theme}`);
   lines.push(`**Duration:** ${room.durationMinutes} minutes`);
