@@ -3,6 +3,9 @@ import PocketBase from 'pocketbase';
 import {
   Acknowledgement,
   AppState,
+  AuditEvent,
+  AuditEventAction,
+  AuditEventEntityType,
   HintLadder,
   PronunciationTerm,
   Room,
@@ -42,6 +45,9 @@ export interface PersistenceAdapter {
   saveStaffMembers(staffMembers: StaffMember[]): Promise<void>;
   loadAcknowledgements(): Promise<Acknowledgement[]>;
   saveAcknowledgements(acknowledgements: Acknowledgement[]): Promise<void>;
+  loadAuditEvents(): Promise<AuditEvent[]>;
+  saveAuditEvents(auditEvents: AuditEvent[]): Promise<void>;
+  recordAuditEvent(event: AuditEvent): Promise<void>;
   loadAuditMetadata(): Promise<AuditMetadata>;
   saveAuditMetadata(metadata: AuditMetadata): Promise<void>;
 }
@@ -57,6 +63,7 @@ const emptyState: AppState = {
   pronunciationTerms: [],
   staffMembers: [],
   acknowledgements: [],
+  auditEvents: [],
 };
 
 function normalizeState(state: Partial<AppState> | null | undefined): AppState {
@@ -68,6 +75,7 @@ function normalizeState(state: Partial<AppState> | null | undefined): AppState {
     pronunciationTerms: state?.pronunciationTerms ?? [],
     staffMembers: state?.staffMembers ?? [],
     acknowledgements: state?.acknowledgements ?? [],
+    auditEvents: state?.auditEvents ?? [],
   };
 }
 
@@ -78,7 +86,7 @@ function readLocalState(): AppState {
   } catch {
     // Fall through to seeded demo data, preserving the previous storage behavior.
   }
-  return sampleData;
+  return normalizeState(sampleData);
 }
 
 function writeLocalState(state: AppState): void {
@@ -114,8 +122,9 @@ export const localStorageAdapter: PersistenceAdapter = {
     writeLocalState(state);
   },
   async resetDemoData() {
-    writeLocalState(sampleData);
-    return sampleData;
+    const seededState = normalizeState(sampleData);
+    writeLocalState(seededState);
+    return seededState;
   },
   async loadRooms() {
     return readLocalState().rooms;
@@ -159,6 +168,15 @@ export const localStorageAdapter: PersistenceAdapter = {
   async saveAcknowledgements(acknowledgements) {
     updateLocalState((state) => ({ ...state, acknowledgements }));
   },
+  async loadAuditEvents() {
+    return readLocalState().auditEvents ?? [];
+  },
+  async saveAuditEvents(auditEvents) {
+    updateLocalState((state) => ({ ...state, auditEvents }));
+  },
+  async recordAuditEvent(event) {
+    updateLocalState((state) => ({ ...state, auditEvents: [...(state.auditEvents ?? []), event] }));
+  },
   async loadAuditMetadata() {
     return readLocalAuditMetadata();
   },
@@ -169,8 +187,15 @@ export const localStorageAdapter: PersistenceAdapter = {
 
 type PocketBaseRecord = Record<string, unknown> & {
   id: string;
+  appId?: string;
   created?: string;
   updated?: string;
+};
+
+type PocketBaseErrorShape = {
+  status?: number;
+  message?: string;
+  data?: unknown;
 };
 
 type AppEntity =
@@ -180,7 +205,8 @@ type AppEntity =
   | HintLadder
   | PronunciationTerm
   | StaffMember
-  | Acknowledgement;
+  | Acknowledgement
+  | AuditEvent;
 
 const collections = {
   rooms: 'gms_rooms',
@@ -190,7 +216,7 @@ const collections = {
   pronunciationTerms: 'gms_pronunciation_terms',
   staffMembers: 'gms_staff_members',
   acknowledgements: 'gms_acknowledgements',
-  auditMetadata: 'gms_audit_metadata',
+  auditEvents: 'gms_audit_events',
 };
 
 function asString(value: unknown, fallback = ''): string {
@@ -217,13 +243,66 @@ function asJsonArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function recordAppId(record: PocketBaseRecord): string {
+  return asString(record.appId, record.id);
+}
+
 function recordTimestamp(record: PocketBaseRecord, field: 'createdAt' | 'updatedAt', fallbackField: 'created' | 'updated'): string {
   return asString(record[field], asString(record[fallbackField], new Date().toISOString()));
 }
 
+function optionalField(record: PocketBaseRecord, field: string): string | undefined {
+  const value = asString(record[field]);
+  return value.length > 0 ? value : undefined;
+}
+
+function optionalNullableField(record: PocketBaseRecord, field: string): string | null | undefined {
+  if (!(field in record)) return undefined;
+  return asNullableString(record[field]);
+}
+
+function isPocketBaseError(error: unknown): error is PocketBaseErrorShape {
+  return error !== null && typeof error === 'object' && ('status' in error || 'message' in error);
+}
+
+function describePocketBaseError(error: unknown, collectionName: string, action: string): Error {
+  if (isPocketBaseError(error)) {
+    const pocketBaseError = error;
+    const status = pocketBaseError.status;
+    if (status === 404) {
+      return new Error(
+        `PocketBase ${action} failed for '${collectionName}'. The collection or record was not found. Create the required collection from docs/pocketbase-schema.md and confirm the collection name is exact.`
+      );
+    }
+    if (status === 401 || status === 403) {
+      return new Error(
+        `PocketBase ${action} failed for '${collectionName}'. Access rules denied the request. Check the collection list/view/create/update/delete rules and ensure the signed-in user has permission.`
+      );
+    }
+    return new Error(
+      `PocketBase ${action} failed for '${collectionName}'${status ? ` with status ${status}` : ''}: ${pocketBaseError.message ?? 'Unknown PocketBase error.'}`
+    );
+  }
+
+  return new Error(`PocketBase ${action} failed for '${collectionName}': ${String(error)}`);
+}
+
+async function withPocketBaseErrors<T>(collectionName: string, action: string, operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw describePocketBaseError(error, collectionName, action);
+  }
+}
+
 export function mapPocketBaseRoom(record: PocketBaseRecord): Room {
   return {
-    id: record.id,
+    id: recordAppId(record),
+    organizationId: optionalField(record, 'organizationId'),
     name: asString(record.name),
     theme: asString(record.theme),
     durationMinutes: asNumber(record.durationMinutes),
@@ -237,7 +316,8 @@ export function mapPocketBaseRoom(record: PocketBaseRecord): Room {
 
 export function mapPocketBaseScript(record: PocketBaseRecord): Script {
   return {
-    id: record.id,
+    id: recordAppId(record),
+    organizationId: optionalField(record, 'organizationId'),
     roomId: asString(record.roomId),
     title: asString(record.title),
     scriptType: asString(record.scriptType, 'training_note') as Script['scriptType'],
@@ -252,7 +332,8 @@ export function mapPocketBaseScript(record: PocketBaseRecord): Script {
 
 export function mapPocketBaseScriptVersion(record: PocketBaseRecord): ScriptVersion {
   return {
-    id: record.id,
+    id: recordAppId(record),
+    organizationId: optionalField(record, 'organizationId'),
     scriptId: asString(record.scriptId),
     versionNumber: asString(record.versionNumber),
     bodyMarkdown: asString(record.bodyMarkdown),
@@ -264,12 +345,19 @@ export function mapPocketBaseScriptVersion(record: PocketBaseRecord): ScriptVers
     approvedBy: asString(record.approvedBy),
     approvedAt: asNullableString(record.approvedAt),
     createdAt: recordTimestamp(record, 'createdAt', 'created'),
+    createdBy: optionalField(record, 'createdBy'),
+    submittedBy: optionalField(record, 'submittedBy'),
+    reviewedBy: optionalField(record, 'reviewedBy'),
+    rejectedAt: optionalNullableField(record, 'rejectedAt'),
+    safetyBlockChecksum: optionalField(record, 'safetyBlockChecksum'),
+    previousVersionId: optionalNullableField(record, 'previousVersionId'),
   };
 }
 
 export function mapPocketBaseHintLadder(record: PocketBaseRecord): HintLadder {
   return {
-    id: record.id,
+    id: recordAppId(record),
+    organizationId: optionalField(record, 'organizationId'),
     roomId: asString(record.roomId),
     puzzleLabel: asString(record.puzzleLabel),
     stageLabel: asString(record.stageLabel),
@@ -283,7 +371,8 @@ export function mapPocketBaseHintLadder(record: PocketBaseRecord): HintLadder {
 
 export function mapPocketBasePronunciationTerm(record: PocketBaseRecord): PronunciationTerm {
   return {
-    id: record.id,
+    id: recordAppId(record),
+    organizationId: optionalField(record, 'organizationId'),
     roomId: asString(record.roomId),
     term: asString(record.term),
     phonetic: asString(record.phonetic),
@@ -298,29 +387,77 @@ export function mapPocketBasePronunciationTerm(record: PocketBaseRecord): Pronun
 
 export function mapPocketBaseStaffMember(record: PocketBaseRecord): StaffMember {
   return {
-    id: record.id,
+    id: recordAppId(record),
+    organizationId: optionalField(record, 'organizationId'),
     name: asString(record.name),
+    email: optionalField(record, 'email'),
+    authUserId: optionalNullableField(record, 'authUserId'),
     role: asString(record.role),
+    permissionLevel: optionalField(record, 'permissionLevel') as StaffMember['permissionLevel'],
     active: asBoolean(record.active, true),
+    invitedAt: optionalNullableField(record, 'invitedAt'),
+    lastLoginAt: optionalNullableField(record, 'lastLoginAt'),
     notes: asString(record.notes),
   };
 }
 
 export function mapPocketBaseAcknowledgement(record: PocketBaseRecord): Acknowledgement {
   return {
-    id: record.id,
+    id: recordAppId(record),
+    organizationId: optionalField(record, 'organizationId'),
     staffId: asString(record.staffId),
     scriptId: asString(record.scriptId),
     versionId: asString(record.versionId),
     acknowledgedAt: asString(record.acknowledgedAt),
+    acknowledgementTextSnapshot: optionalField(record, 'acknowledgementTextSnapshot'),
+    ipAddress: optionalField(record, 'ipAddress'),
+    userAgent: optionalField(record, 'userAgent'),
+    source: optionalField(record, 'source') as Acknowledgement['source'],
+    supersededByVersionId: optionalNullableField(record, 'supersededByVersionId'),
+    revokedAt: optionalNullableField(record, 'revokedAt'),
+    revokedBy: optionalNullableField(record, 'revokedBy'),
     notes: asString(record.notes),
   };
 }
 
+export function mapPocketBaseAuditEvent(record: PocketBaseRecord): AuditEvent {
+  return {
+    id: recordAppId(record),
+    organizationId: optionalField(record, 'organizationId'),
+    action: asString(record.action, 'update') as AuditEventAction,
+    entityType: asString(record.entityType, 'app_state') as AuditEventEntityType,
+    entityId: asString(record.entityId),
+    roomId: optionalNullableField(record, 'roomId'),
+    scriptId: optionalNullableField(record, 'scriptId'),
+    versionId: optionalNullableField(record, 'versionId'),
+    staffId: optionalNullableField(record, 'staffId'),
+    actorStaffId: optionalNullableField(record, 'actorStaffId'),
+    actorAuthUserId: optionalNullableField(record, 'actorAuthUserId'),
+    summary: asString(record.summary),
+    metadata: asRecord(record.metadata),
+    ipAddress: optionalField(record, 'ipAddress'),
+    userAgent: optionalField(record, 'userAgent'),
+    createdAt: recordTimestamp(record, 'createdAt', 'created'),
+  };
+}
+
 function toPocketBaseRecord(entity: AppEntity): Record<string, unknown> {
-  const fields: Record<string, unknown> = { ...entity };
+  const fields: Record<string, unknown> = { ...entity, appId: entity.id };
   delete fields.id;
-  return fields;
+
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
+}
+
+async function loadCollection<T>(
+  pb: PocketBase,
+  collectionName: string,
+  mapper: (record: PocketBaseRecord) => T,
+  sort = 'created'
+): Promise<T[]> {
+  return withPocketBaseErrors(collectionName, 'load', async () => {
+    const records = await pb.collection(collectionName).getFullList<PocketBaseRecord>({ sort });
+    return records.map(mapper);
+  });
 }
 
 async function saveCollection<T extends AppEntity>(
@@ -328,25 +465,39 @@ async function saveCollection<T extends AppEntity>(
   collectionName: string,
   entities: T[]
 ): Promise<void> {
-  const collection = pb.collection(collectionName);
-  const existingRecords = await collection.getFullList<PocketBaseRecord>();
-  const nextIds = new Set(entities.map((entity) => entity.id));
+  await withPocketBaseErrors(collectionName, 'save', async () => {
+    const collection = pb.collection(collectionName);
+    const existingRecords = await collection.getFullList<PocketBaseRecord>();
+    const existingByAppId = new Map(existingRecords.map((record) => [recordAppId(record), record]));
+    const nextIds = new Set(entities.map((entity) => entity.id));
 
-  await Promise.all(
-    entities.map((entity) => {
-      const payload = toPocketBaseRecord(entity);
-      const exists = existingRecords.some((record) => record.id === entity.id);
-      return exists
-        ? collection.update(entity.id, payload)
-        : collection.create({ id: entity.id, ...payload });
-    })
-  );
+    await Promise.all(
+      entities.map((entity) => {
+        const payload = toPocketBaseRecord(entity);
+        const existingRecord = existingByAppId.get(entity.id);
+        return existingRecord ? collection.update(existingRecord.id, payload) : collection.create(payload);
+      })
+    );
 
-  await Promise.all(
-    existingRecords
-      .filter((record) => !nextIds.has(record.id))
-      .map((record) => collection.delete(record.id))
-  );
+    await Promise.all(
+      existingRecords
+        .filter((record) => !nextIds.has(recordAppId(record)))
+        .map((record) => collection.delete(record.id))
+    );
+  });
+}
+
+function auditMetadataToEvent(metadata: AuditMetadata): AuditEvent {
+  const now = new Date().toISOString();
+  return {
+    id: `audit_metadata_${Date.now()}`,
+    action: 'update',
+    entityType: 'app_state',
+    entityId: 'global',
+    summary: 'Saved readiness audit metadata.',
+    metadata,
+    createdAt: now,
+  };
 }
 
 function createPocketBaseAdapter(url: string): PersistenceAdapter {
@@ -365,6 +516,7 @@ function createPocketBaseAdapter(url: string): PersistenceAdapter {
         pronunciationTerms,
         staffMembers,
         acknowledgements,
+        auditEvents,
       ] = await Promise.all([
         this.loadRooms(),
         this.loadScripts(),
@@ -373,6 +525,7 @@ function createPocketBaseAdapter(url: string): PersistenceAdapter {
         this.loadPronunciationTerms(),
         this.loadStaffMembers(),
         this.loadAcknowledgements(),
+        this.loadAuditEvents(),
       ]);
 
       return {
@@ -383,83 +536,82 @@ function createPocketBaseAdapter(url: string): PersistenceAdapter {
         pronunciationTerms,
         staffMembers,
         acknowledgements,
+        auditEvents,
       };
     },
     async saveAppState(state) {
-      await Promise.all([
-        this.saveRooms(state.rooms),
-        this.saveScripts(state.scripts),
-        this.saveScriptVersions(state.scriptVersions),
-        this.saveHintLadders(state.hintLadders),
-        this.savePronunciationTerms(state.pronunciationTerms),
-        this.saveStaffMembers(state.staffMembers),
-        this.saveAcknowledgements(state.acknowledgements),
-      ]);
+      await this.saveRooms(state.rooms);
+      await this.saveScripts(state.scripts);
+      await this.saveScriptVersions(state.scriptVersions);
+      await this.saveHintLadders(state.hintLadders);
+      await this.savePronunciationTerms(state.pronunciationTerms);
+      await this.saveStaffMembers(state.staffMembers);
+      await this.saveAcknowledgements(state.acknowledgements);
+      if (state.auditEvents) await this.saveAuditEvents(state.auditEvents);
     },
     async loadRooms() {
-      const records = await pb.collection(collections.rooms).getFullList<PocketBaseRecord>({ sort: 'created' });
-      return records.map(mapPocketBaseRoom);
+      return loadCollection(pb, collections.rooms, mapPocketBaseRoom);
     },
     async saveRooms(rooms) {
       await saveCollection(pb, collections.rooms, rooms);
     },
     async loadScripts() {
-      const records = await pb.collection(collections.scripts).getFullList<PocketBaseRecord>({ sort: 'created' });
-      return records.map(mapPocketBaseScript);
+      return loadCollection(pb, collections.scripts, mapPocketBaseScript);
     },
     async saveScripts(scripts) {
       await saveCollection(pb, collections.scripts, scripts);
     },
     async loadScriptVersions() {
-      const records = await pb.collection(collections.scriptVersions).getFullList<PocketBaseRecord>({ sort: 'created' });
-      return records.map(mapPocketBaseScriptVersion);
+      return loadCollection(pb, collections.scriptVersions, mapPocketBaseScriptVersion);
     },
     async saveScriptVersions(scriptVersions) {
       await saveCollection(pb, collections.scriptVersions, scriptVersions);
     },
     async loadHintLadders() {
-      const records = await pb.collection(collections.hintLadders).getFullList<PocketBaseRecord>({ sort: 'created' });
-      return records.map(mapPocketBaseHintLadder);
+      return loadCollection(pb, collections.hintLadders, mapPocketBaseHintLadder);
     },
     async saveHintLadders(hintLadders) {
       await saveCollection(pb, collections.hintLadders, hintLadders);
     },
     async loadPronunciationTerms() {
-      const records = await pb.collection(collections.pronunciationTerms).getFullList<PocketBaseRecord>({ sort: 'created' });
-      return records.map(mapPocketBasePronunciationTerm);
+      return loadCollection(pb, collections.pronunciationTerms, mapPocketBasePronunciationTerm);
     },
     async savePronunciationTerms(pronunciationTerms) {
       await saveCollection(pb, collections.pronunciationTerms, pronunciationTerms);
     },
     async loadStaffMembers() {
-      const records = await pb.collection(collections.staffMembers).getFullList<PocketBaseRecord>({ sort: 'created' });
-      return records.map(mapPocketBaseStaffMember);
+      return loadCollection(pb, collections.staffMembers, mapPocketBaseStaffMember);
     },
     async saveStaffMembers(staffMembers) {
       await saveCollection(pb, collections.staffMembers, staffMembers);
     },
     async loadAcknowledgements() {
-      const records = await pb.collection(collections.acknowledgements).getFullList<PocketBaseRecord>({ sort: 'created' });
-      return records.map(mapPocketBaseAcknowledgement);
+      return loadCollection(pb, collections.acknowledgements, mapPocketBaseAcknowledgement);
     },
     async saveAcknowledgements(acknowledgements) {
       await saveCollection(pb, collections.acknowledgements, acknowledgements);
     },
+    async loadAuditEvents() {
+      return loadCollection(pb, collections.auditEvents, mapPocketBaseAuditEvent, '-created');
+    },
+    async saveAuditEvents(auditEvents) {
+      await saveCollection(pb, collections.auditEvents, auditEvents);
+    },
+    async recordAuditEvent(event) {
+      await withPocketBaseErrors(collections.auditEvents, 'create audit event', async () => {
+        await pb.collection(collections.auditEvents).create(toPocketBaseRecord(event));
+      });
+    },
     async loadAuditMetadata() {
-      try {
-        const record = await pb.collection(collections.auditMetadata).getOne<PocketBaseRecord>('global');
-        return { ...(record.metadata as AuditMetadata), lastSavedAt: asString(record.lastSavedAt) };
-      } catch {
-        return {};
-      }
+      const events = await this.loadAuditEvents();
+      const metadataEvent = events.find((event) => event.entityType === 'app_state' && event.entityId === 'global');
+      return {
+        ...(metadataEvent?.metadata ?? {}),
+        lastSavedAt: metadataEvent?.createdAt,
+      };
     },
     async saveAuditMetadata(metadata) {
-      const payload = { id: 'global', metadata, lastSavedAt: new Date().toISOString() };
-      try {
-        await pb.collection(collections.auditMetadata).update('global', payload);
-      } catch {
-        await pb.collection(collections.auditMetadata).create(payload);
-      }
+      await this.recordAuditEvent(auditMetadataToEvent(metadata));
     },
   };
 }

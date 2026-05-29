@@ -25,7 +25,37 @@ export type SpoilerLevel = 'low' | 'medium' | 'high';
 
 export type IssueSeverity = 'critical' | 'warning' | 'improvement';
 
-export interface Room {
+export type StaffPermissionLevel = 'owner' | 'manager' | 'lead_gm' | 'gm' | 'trainee' | 'viewer';
+
+export type AcknowledgementSource = 'gm_mode' | 'staff_training' | 'manager_review' | 'import' | 'manual';
+
+export type AuditEventAction =
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'approve'
+  | 'make-current'
+  | 'acknowledge'
+  | 'export'
+  | 'import';
+
+export type AuditEventEntityType =
+  | 'room'
+  | 'script'
+  | 'script_version'
+  | 'hint_ladder'
+  | 'pronunciation_term'
+  | 'staff_member'
+  | 'acknowledgement'
+  | 'room_packet'
+  | 'app_state';
+
+export interface ProductionScopedRecord {
+  /** Reserved for future multi-organization support. The current app remains single-organization. */
+  organizationId?: string;
+}
+
+export interface Room extends ProductionScopedRecord {
   id: string;
   name: string;
   theme: string;
@@ -37,7 +67,7 @@ export interface Room {
   updatedAt: string;
 }
 
-export interface Script {
+export interface Script extends ProductionScopedRecord {
   id: string;
   roomId: string;
   title: string;
@@ -50,7 +80,7 @@ export interface Script {
   updatedAt: string;
 }
 
-export interface ScriptVersion {
+export interface ScriptVersion extends ProductionScopedRecord {
   id: string;
   scriptId: string;
   versionNumber: string;
@@ -63,6 +93,12 @@ export interface ScriptVersion {
   approvedBy: string;
   approvedAt: string | null;
   createdAt: string;
+  createdBy?: string;
+  submittedBy?: string;
+  reviewedBy?: string;
+  rejectedAt?: string | null;
+  safetyBlockChecksum?: string;
+  previousVersionId?: string | null;
 }
 
 export interface HintStep {
@@ -71,7 +107,7 @@ export interface HintStep {
   spoilerLevel: SpoilerLevel;
 }
 
-export interface HintLadder {
+export interface HintLadder extends ProductionScopedRecord {
   id: string;
   roomId: string;
   puzzleLabel: string;
@@ -83,7 +119,7 @@ export interface HintLadder {
   updatedAt: string;
 }
 
-export interface PronunciationTerm {
+export interface PronunciationTerm extends ProductionScopedRecord {
   id: string;
   roomId: string;
   term: string;
@@ -96,21 +132,51 @@ export interface PronunciationTerm {
   updatedAt: string;
 }
 
-export interface StaffMember {
+export interface StaffMember extends ProductionScopedRecord {
   id: string;
   name: string;
   role: string;
   active: boolean;
   notes: string;
+  email?: string;
+  authUserId?: string | null;
+  permissionLevel?: StaffPermissionLevel;
+  invitedAt?: string | null;
+  lastLoginAt?: string | null;
 }
 
-export interface Acknowledgement {
+export interface Acknowledgement extends ProductionScopedRecord {
   id: string;
   staffId: string;
   scriptId: string;
   versionId: string;
   acknowledgedAt: string;
   notes: string;
+  acknowledgementTextSnapshot?: string;
+  ipAddress?: string;
+  userAgent?: string;
+  source?: AcknowledgementSource;
+  supersededByVersionId?: string | null;
+  revokedAt?: string | null;
+  revokedBy?: string | null;
+}
+
+export interface AuditEvent extends ProductionScopedRecord {
+  id: string;
+  action: AuditEventAction;
+  entityType: AuditEventEntityType;
+  entityId: string;
+  roomId?: string | null;
+  scriptId?: string | null;
+  versionId?: string | null;
+  staffId?: string | null;
+  actorStaffId?: string | null;
+  actorAuthUserId?: string | null;
+  summary: string;
+  metadata?: Record<string, unknown>;
+  ipAddress?: string;
+  userAgent?: string;
+  createdAt: string;
 }
 
 export interface ScriptReadinessIssue {
@@ -140,4 +206,5 @@ export interface AppState {
   pronunciationTerms: PronunciationTerm[];
   staffMembers: StaffMember[];
   acknowledgements: Acknowledgement[];
+  auditEvents?: AuditEvent[];
 }
