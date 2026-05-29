@@ -2,16 +2,16 @@ import { useState } from 'react';
 import { Download, Copy, FileJson, FileText, Info, RotateCcw } from 'lucide-react';
 import { AppState } from '../types';
 import { exportRoomJSON, exportRoomMarkdown, downloadFile } from '../services/exporters';
-import { resetToSampleData } from '../lib/storage';
 import { useToast } from '../lib/useToast';
 import ConfirmModal from './ConfirmModal';
 
 interface Props {
   state: AppState;
-  onResetState: (newState: AppState) => void;
+  isDemoMode: boolean;
+  onRestoreDemoData?: () => Promise<void>;
 }
 
-export default function ExportCenter({ state, onResetState }: Props) {
+export default function ExportCenter({ state, isDemoMode, onRestoreDemoData }: Props) {
   const { toast } = useToast();
   const [selectedRoomId, setSelectedRoomId] = useState(state.rooms[0]?.id ?? '');
   const [confirmReset, setConfirmReset] = useState(false);
@@ -56,11 +56,15 @@ export default function ExportCenter({ state, onResetState }: Props) {
     toast(`Downloaded ${filename}`);
   }
 
-  function handleResetConfirmed() {
-    const fresh = resetToSampleData();
-    onResetState(fresh);
-    setConfirmReset(false);
-    toast('Demo data restored', 'info');
+  async function handleResetConfirmed() {
+    if (!onRestoreDemoData) return;
+    try {
+      await onRestoreDemoData();
+      setConfirmReset(false);
+      toast('Demo data restored', 'info');
+    } catch {
+      toast('Unable to restore demo data', 'error');
+    }
   }
 
   const jsonPreview = room ? exportRoomJSON(state, room.id).slice(0, 400) + '...' : '';
@@ -84,13 +88,15 @@ export default function ExportCenter({ state, onResetState }: Props) {
           <h1 className="text-2xl font-bold text-slate-100">Export Center</h1>
           <p className="text-slate-400 text-sm mt-0.5">Export script packets as JSON for integrations or Markdown for printing and sharing.</p>
         </div>
-        <button
-          onClick={() => setConfirmReset(true)}
-          className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-400 hover:text-slate-200 rounded-lg text-sm transition-colors"
-          aria-label="Reset to demo data"
-        >
-          <RotateCcw className="w-3.5 h-3.5" /> Reset Demo Data
-        </button>
+        {isDemoMode && onRestoreDemoData && (
+          <button
+            onClick={() => setConfirmReset(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-400 hover:text-slate-200 rounded-lg text-sm transition-colors"
+            aria-label="Reset to demo data"
+          >
+            <RotateCcw className="w-3.5 h-3.5" /> Reset Demo Data
+          </button>
+        )}
       </div>
 
       <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-5">

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { LayoutDashboard, DoorOpen, BookOpen, File as FileEdit, History, Mic, Layers, Volume2, Users, ShieldCheck, Download, Menu, X, Clock } from 'lucide-react';
 
 import { AppState, Room, Script, ScriptVersion, HintLadder, PronunciationTerm, StaffMember, Acknowledgement } from './types';
-import { loadAppState, saveAppState } from './lib/storage';
+import { dataAdapter, initialEmptyAppState } from './lib/dataAdapter';
 import { ToastProvider } from './lib/toast';
 
 import Dashboard from './components/Dashboard';
@@ -45,14 +45,60 @@ const navItems: { id: Screen; label: string; icon: React.ComponentType<{ classNa
 ];
 
 export default function App() {
-  const [state, setState] = useState<AppState>(loadAppState);
+  const [state, setState] = useState<AppState>(initialEmptyAppState);
   const [screen, setScreen] = useState<Screen>('dashboard');
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   useEffect(() => {
-    saveAppState(state);
-  }, [state]);
+    let cancelled = false;
+
+    async function loadState() {
+      setIsLoading(true);
+      setLoadError(null);
+      try {
+        const loadedState = await dataAdapter.loadAppState();
+        if (!cancelled) setState(loadedState);
+      } catch (error) {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : 'Unable to load application data.');
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    }
+
+    void loadState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isLoading || loadError) return;
+
+    let cancelled = false;
+
+    async function persistState() {
+      setSaveStatus('saving');
+      try {
+        await dataAdapter.saveAppState(state);
+        if (!cancelled) setSaveStatus('saved');
+      } catch {
+        if (!cancelled) setSaveStatus('error');
+      }
+    }
+
+    void persistState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoading, loadError, state]);
 
   function navigate(s: string) {
     setScreen(s as Screen);
@@ -138,11 +184,44 @@ export default function App() {
     setState((s) => ({ ...s, staffMembers: [...s.staffMembers, staff] }));
   }
 
-  function resetState(newState: AppState) {
-    setState(newState);
+  async function restoreDemoData() {
+    if (!dataAdapter.resetDemoData) return;
+    const fresh = await dataAdapter.resetDemoData();
+    setState(fresh);
   }
 
   const isGMMode = screen === 'gm';
+  const isAppEmpty = Object.values(state).every((collection) => collection.length === 0);
+
+  if (isLoading) {
+    return (
+      <ToastProvider>
+        <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 max-w-md text-center shadow-xl">
+            <Clock className="w-8 h-8 text-slate-500 mx-auto mb-3 animate-pulse" />
+            <h1 className="text-lg font-semibold text-slate-100">Loading GM Script Library</h1>
+            <p className="text-sm text-slate-500 mt-2">Connecting to {dataAdapter.label} persistence.</p>
+          </div>
+        </div>
+      </ToastProvider>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <ToastProvider>
+        <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-4">
+          <div className="bg-slate-900 border border-red-900/60 rounded-xl p-6 max-w-lg shadow-xl">
+            <h1 className="text-lg font-semibold text-red-200">Unable to load application data</h1>
+            <p className="text-sm text-slate-400 mt-2">{loadError}</p>
+            <p className="text-xs text-slate-500 mt-3">
+              Check the selected data mode, PocketBase URL, and collection availability, then refresh the app.
+            </p>
+          </div>
+        </div>
+      </ToastProvider>
+    );
+  }
 
   return (
     <ToastProvider>
@@ -204,8 +283,13 @@ export default function App() {
                 })}
               </nav>
 
-              <div className="px-4 py-3 border-t border-slate-800 text-xs text-slate-600">
-                MJW Platform · v1.0
+              <div className="px-4 py-3 border-t border-slate-800 text-xs text-slate-600 space-y-2">
+                {dataAdapter.isDemo && (
+                  <div className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-300">
+                    Demo Mode
+                  </div>
+                )}
+                <div>MJW Platform · v1.0</div>
               </div>
             </aside>
 
@@ -228,10 +312,45 @@ export default function App() {
                 <h1 className="text-sm font-semibold text-slate-300 capitalize">
                   {navItems.find((n) => n.id === screen)?.label ?? 'GM Script Library'}
                 </h1>
+                <div className="ml-auto flex items-center gap-2 text-xs text-slate-500">
+                  {dataAdapter.isDemo && (
+                    <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 font-medium text-amber-300">
+                      Demo Mode
+                    </span>
+                  )}
+                  <span aria-live="polite">
+                    {saveStatus === 'saving' && 'Saving…'}
+                    {saveStatus === 'saved' && 'Saved'}
+                    {saveStatus === 'error' && 'Save failed'}
+                    {saveStatus === 'idle' && dataAdapter.label}
+                  </span>
+                </div>
               </header>
 
               <main className="flex-1 overflow-y-auto">
                 <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
+                  {saveStatus === 'error' && (
+                    <div className="mb-5 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-sm text-red-200">
+                      Changes are visible locally but could not be saved to {dataAdapter.label}. Check the backend connection before continuing operational work.
+                    </div>
+                  )}
+                  {isAppEmpty && (
+                    <div className="mb-5 rounded-xl border border-dashed border-slate-700 bg-slate-900/60 px-5 py-4">
+                      <h2 className="text-sm font-semibold text-slate-200">No library data found</h2>
+                      <p className="text-sm text-slate-500 mt-1">
+                        Create rooms and scripts to begin, or restore the sample data when running in demo mode.
+                      </p>
+                      {dataAdapter.resetDemoData && (
+                        <button
+                          type="button"
+                          onClick={() => void restoreDemoData()}
+                          className="mt-3 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700"
+                        >
+                          Restore Demo Data
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {screen === 'dashboard' && (
                     <Dashboard state={state} onNavigate={navigate} />
                   )}
@@ -278,7 +397,11 @@ export default function App() {
                     <ReadinessAudit state={state} />
                   )}
                   {screen === 'export' && (
-                    <ExportCenter state={state} onResetState={resetState} />
+                    <ExportCenter
+                      state={state}
+                      isDemoMode={dataAdapter.isDemo}
+                      onRestoreDemoData={dataAdapter.resetDemoData ? restoreDemoData : undefined}
+                    />
                   )}
                 </div>
               </main>
