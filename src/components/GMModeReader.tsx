@@ -175,8 +175,8 @@ export default function GMModeReader({ state }: Props) {
   const selectedOption = currentScriptOptions.find((option) => option.script.id === selectedScriptId) ?? currentScriptOptions[0] ?? null;
   const currentScript = selectedOption?.script ?? null;
   const currentVersion = selectedOption?.version ?? null;
-  const pronunciationTerms = state.pronunciationTerms.filter((term) => term.roomId === selectedRoomId);
-  const roomHintLadders = useMemo(() => state.hintLadders.filter((ladder) => ladder.roomId === selectedRoomId), [state.hintLadders, selectedRoomId]);
+  const pronunciationTerms = state.pronunciationTerms.filter((term) => term.roomId === selectedRoomId && !term.deliveryNote.includes('[ARCHIVED]'));
+  const roomHintLadders = useMemo(() => state.hintLadders.filter((ladder) => ladder.roomId === selectedRoomId && !ladder.notes.includes('[ARCHIVED]')), [state.hintLadders, selectedRoomId]);
   const selectedHintLadder = roomHintLadders.find((ladder) => ladder.id === selectedHintLadderId) ?? roomHintLadders[0];
   const availableTypes = scriptTypeOrder.filter((type) => getCurrentScriptOptions(state, selectedRoomId, type).length > 0);
   const quickJumpAvailableTypes = quickJumpTypes.filter((type) => getCurrentScriptOptions(state, selectedRoomId, type).length > 0);

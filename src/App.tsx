@@ -152,11 +152,30 @@ export default function App() {
   }
 
   function addRoom(room: Room) {
-    setState((s) => ({ ...s, rooms: [...s.rooms, room] }));
+    setState((s) => ({
+      ...s,
+      rooms: [...s.rooms, room],
+      auditEvents: [...(s.auditEvents ?? []), buildAuditEvent('create', 'room', room.id, `Created room ${room.name}`, { status: room.status, durationMinutes: room.durationMinutes })],
+    }));
   }
 
   function updateRoom(room: Room) {
-    setState((s) => ({ ...s, rooms: s.rooms.map((r) => (r.id === room.id ? room : r)) }));
+    setState((s) => {
+      const previous = s.rooms.find((r) => r.id === room.id);
+      const action: AuditEvent['action'] = room.status === 'retired' && previous?.status !== 'retired' ? 'archive' : 'update';
+      return {
+        ...s,
+        rooms: s.rooms.map((r) => (r.id === room.id ? room : r)),
+        auditEvents: [
+          ...(s.auditEvents ?? []),
+          buildAuditEvent(action, 'room', room.id, `${action === 'archive' ? 'Retired' : 'Updated'} room ${room.name}`, {
+            previousStatus: previous?.status,
+            nextStatus: room.status,
+            durationMinutes: room.durationMinutes,
+          }),
+        ],
+      };
+    });
   }
 
   function saveScript(script: Script) {
@@ -297,25 +316,57 @@ export default function App() {
   }
 
   function addHintLadder(ladder: HintLadder) {
-    setState((s) => ({ ...s, hintLadders: [...s.hintLadders, ladder] }));
+    setState((s) => ({
+      ...s,
+      hintLadders: [...s.hintLadders, ladder],
+      auditEvents: [...(s.auditEvents ?? []), buildAuditEvent('create', 'hint_ladder', ladder.id, `Created hint ladder ${ladder.puzzleLabel}`, { roomId: ladder.roomId, hintCount: ladder.hints.length })],
+    }));
   }
 
   function updateHintLadder(ladder: HintLadder) {
-    setState((s) => ({
-      ...s,
-      hintLadders: s.hintLadders.map((h) => (h.id === ladder.id ? ladder : h)),
-    }));
+    setState((s) => {
+      const previous = s.hintLadders.find((h) => h.id === ladder.id);
+      const archived = ladder.notes.includes('[ARCHIVED]') && !previous?.notes.includes('[ARCHIVED]');
+      return {
+        ...s,
+        hintLadders: s.hintLadders.map((h) => (h.id === ladder.id ? ladder : h)),
+        auditEvents: [
+          ...(s.auditEvents ?? []),
+          buildAuditEvent(archived ? 'archive' : 'update', 'hint_ladder', ladder.id, `${archived ? 'Archived' : 'Updated'} hint ladder ${ladder.puzzleLabel}`, {
+            roomId: ladder.roomId,
+            hintCount: ladder.hints.length,
+            previousPuzzleLabel: previous?.puzzleLabel,
+          }),
+        ],
+      };
+    });
   }
 
   function addPronunciationTerm(term: PronunciationTerm) {
-    setState((s) => ({ ...s, pronunciationTerms: [...s.pronunciationTerms, term] }));
+    setState((s) => ({
+      ...s,
+      pronunciationTerms: [...s.pronunciationTerms, term],
+      auditEvents: [...(s.auditEvents ?? []), buildAuditEvent('create', 'pronunciation_term', term.id, `Created pronunciation term ${term.term}`, { roomId: term.roomId, hasAudioUrl: Boolean(term.audioNoteUrl) })],
+    }));
   }
 
   function updatePronunciationTerm(term: PronunciationTerm) {
-    setState((s) => ({
-      ...s,
-      pronunciationTerms: s.pronunciationTerms.map((t) => (t.id === term.id ? term : t)),
-    }));
+    setState((s) => {
+      const previous = s.pronunciationTerms.find((t) => t.id === term.id);
+      const archived = term.deliveryNote.includes('[ARCHIVED]') && !previous?.deliveryNote.includes('[ARCHIVED]');
+      return {
+        ...s,
+        pronunciationTerms: s.pronunciationTerms.map((t) => (t.id === term.id ? term : t)),
+        auditEvents: [
+          ...(s.auditEvents ?? []),
+          buildAuditEvent(archived ? 'archive' : 'update', 'pronunciation_term', term.id, `${archived ? 'Archived' : 'Updated'} pronunciation term ${term.term}`, {
+            roomId: term.roomId,
+            previousTerm: previous?.term,
+            hasAudioUrl: Boolean(term.audioNoteUrl),
+          }),
+        ],
+      };
+    });
   }
 
   async function addAcknowledgement(ack: Acknowledgement, auditEvent: AuditEvent) {
