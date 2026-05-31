@@ -109,7 +109,8 @@ export type AuditEventAction =
   | 'make-current'
   | 'acknowledge'
   | 'export'
-  | 'import';
+  | 'import'
+  | 'ai_assist';
 
 export type AuditEventEntityType =
   | 'room'
@@ -152,6 +153,21 @@ export interface Script extends ProductionScopedRecord {
   updatedAt: string;
 }
 
+export interface AIRewriteMetadata {
+  assisted: true;
+  provider: 'openai' | 'gemini';
+  model: string;
+  generatedAt: string;
+  sourceVersionId: string | null;
+  settings: Record<string, string>;
+  requiredBlockCheck: {
+    preserved: boolean;
+    missingBlocks: string[];
+    alteredBlocks: string[];
+  };
+  warnings: string[];
+}
+
 export interface ScriptVersion extends ProductionScopedRecord {
   id: string;
   scriptId: string;
@@ -171,6 +187,7 @@ export interface ScriptVersion extends ProductionScopedRecord {
   rejectedAt?: string | null;
   safetyBlockChecksum?: string;
   previousVersionId?: string | null;
+  aiRewrite?: AIRewriteMetadata;
 }
 
 export interface HintStep {

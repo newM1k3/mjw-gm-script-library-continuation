@@ -210,13 +210,19 @@ export default function App() {
     setState((s) => {
       const exists = s.scriptVersions.find((v) => v.id === version.id);
       const script = s.scripts.find((candidate) => candidate.id === version.scriptId);
-      const auditAction: AuditEvent['action'] = version.approvalStatus === 'in_review' ? 'submit' : 'create';
+      const auditAction: AuditEvent['action'] = version.aiRewrite?.assisted ? 'ai_assist' : (version.approvalStatus === 'in_review' ? 'submit' : 'create');
+      const auditVerb = auditAction === 'ai_assist' ? 'Created AI-assisted draft' : (auditAction === 'submit' ? 'Submitted' : 'Created');
       const auditEvent = buildAuditEvent(
         auditAction,
         'script_version',
         version.id,
-        `${auditAction === 'submit' ? 'Submitted' : 'Created'} v${version.versionNumber}${script ? ` for ${script.title}` : ''}`,
-        { scriptId: version.scriptId, versionNumber: version.versionNumber, approvalStatus: version.approvalStatus }
+        `${auditVerb} v${version.versionNumber}${script ? ` for ${script.title}` : ''}`,
+        {
+          scriptId: version.scriptId,
+          versionNumber: version.versionNumber,
+          approvalStatus: version.approvalStatus,
+          aiRewrite: version.aiRewrite ?? null,
+        }
       );
       if (exists) {
         return { ...s, scriptVersions: s.scriptVersions.map((v) => (v.id === version.id ? versionWithChecksum : v)), auditEvents: [...(s.auditEvents ?? []), auditEvent] };

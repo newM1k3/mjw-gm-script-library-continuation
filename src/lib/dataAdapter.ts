@@ -407,6 +407,7 @@ export function mapPocketBaseScriptVersion(record: PocketBaseRecord): ScriptVers
     rejectedAt: optionalNullableField(record, 'rejectedAt'),
     safetyBlockChecksum: optionalField(record, 'safetyBlockChecksum'),
     previousVersionId: optionalNullableField(record, 'previousVersionId'),
+    aiRewrite: optionalField(record, 'aiRewrite'),
   };
 }
 
