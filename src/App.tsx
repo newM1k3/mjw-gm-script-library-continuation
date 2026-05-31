@@ -397,6 +397,10 @@ export default function App() {
     setState(fresh);
   }
 
+  function applyImportedState(importedState: AppState) {
+    setState(importedState);
+  }
+
   const isGMMode = screen === 'gm';
   const isAppEmpty = Object.values(state).every((collection) => collection.length === 0);
 
@@ -654,6 +658,7 @@ export default function App() {
                         state={state}
                         isDemoMode={dataAdapter.isDemo}
                         onRestoreDemoData={dataAdapter.resetDemoData ? restoreDemoData : undefined}
+                        onApplyImportedState={applyImportedState}
                       />
                     ) : (
                       <AuthorizationNotice title="Manager access required" message="Exports can include operational scripts and training data, so this screen is limited to Managers and Owners." />

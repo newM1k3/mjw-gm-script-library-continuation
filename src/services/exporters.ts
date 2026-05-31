@@ -1,10 +1,128 @@
-import { AcknowledgementReportFilters, AppState, ScriptReadinessResult } from '../types';
+import {
+  Acknowledgement,
+  AcknowledgementReportFilters,
+  AppState,
+  AuditEvent,
+  HintLadder,
+  PronunciationTerm,
+  Room,
+  Script,
+  ScriptReadinessResult,
+  ScriptVersion,
+} from '../types';
 import { buildAcknowledgementReportRows, acknowledgementStatusLabels, formatApprovalDate } from '../lib/acknowledgements';
 import { runAllAudits, runAudit, runGlobalAuditIssues } from '../lib/scriptAudit';
 
-export function exportRoomJSON(state: AppState, roomId: string): string {
+export const GMS_EXPORT_SCHEMA_VERSION = '1.0.0';
+export const GMS_SOURCE_APP = 'GM Script Library';
+
+export type GmsExportType =
+  | 'room_packet'
+  | 'staff_acknowledgement_report'
+  | 'readiness_audit_report'
+  | 'full_backup'
+  | 'integration_packet';
+
+export type ImportMode = 'merge' | 'overwrite_room';
+
+interface ExportEnvelope<TPayload> {
+  gms_export_schema_version: typeof GMS_EXPORT_SCHEMA_VERSION;
+  version: typeof GMS_EXPORT_SCHEMA_VERSION;
+  sourceApp: typeof GMS_SOURCE_APP;
+  exportType: GmsExportType;
+  reportType?: string;
+  exportedAt: string;
+  generatedFrom: 'client_state' | 'server_backend';
+  producer: {
+    app: typeof GMS_SOURCE_APP;
+    platform: 'MJW Personal App Platform';
+    schemaDocumentation: 'docs/export-schema.md';
+  };
+  payload: TPayload;
+}
+
+export interface RoomPacketPayload {
+  room: Room;
+  scripts: Array<Script & { currentVersion: ScriptVersion | null }>;
+  scriptVersions: ScriptVersion[];
+  hintLadders: HintLadder[];
+  pronunciationGuide: PronunciationTerm[];
+  acknowledgements: Array<Acknowledgement & { staffName?: string; staffRole?: string }>;
+  scriptReadinessAudit: ScriptReadinessResult;
+  integrationHints: Record<string, unknown>;
+}
+
+export interface RoomPacketImportPreview {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  roomName: string;
+  roomId: string;
+  counts: {
+    rooms: number;
+    scripts: number;
+    scriptVersions: number;
+    hintLadders: number;
+    pronunciationTerms: number;
+    acknowledgements: number;
+  };
+  duplicates: {
+    room: boolean;
+    scripts: number;
+    scriptVersions: number;
+    hintLadders: number;
+    pronunciationTerms: number;
+    acknowledgements: number;
+  };
+  packet?: RoomPacketPayload;
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function envelope<TPayload>(exportType: GmsExportType, payload: TPayload, reportType?: string): ExportEnvelope<TPayload> {
+  return {
+    gms_export_schema_version: GMS_EXPORT_SCHEMA_VERSION,
+    version: GMS_EXPORT_SCHEMA_VERSION,
+    sourceApp: GMS_SOURCE_APP,
+    exportType,
+    reportType,
+    exportedAt: nowIso(),
+    generatedFrom: 'client_state',
+    producer: {
+      app: GMS_SOURCE_APP,
+      platform: 'MJW Personal App Platform',
+      schemaDocumentation: 'docs/export-schema.md',
+    },
+    payload,
+  };
+}
+
+function roomIntegrationHints(): Record<string, unknown> {
+  return {
+    recommendedDestinations: [
+      'RoomReady Ops',
+      'Puzzle Flow Visualizer',
+      'Puzzle Dependency Auditor',
+      'LockMap Studio',
+      'Room Layout Risk Mapper',
+      'MJW Operator Toolkit',
+    ],
+    roomReadyOpsUse: 'Convert current-script acknowledgement status into pre-shift readiness tasks. Flag any staff with outstanding acknowledgements as a pre-game blocker.',
+    puzzleFlowUse: 'Associate hint ladders with puzzle flow stages. Import stage labels from Puzzle Flow Visualizer to auto-scaffold hint ladder entries.',
+    puzzleDependencyAuditorUse: 'Use dependency audit results to identify high-risk progression nodes and auto-suggest hint ladder coverage.',
+    lockMapStudioUse: 'Import ambiguous lock and answer notes as GM hint annotations to reduce over-hinting on unclear locks.',
+    roomLayoutRiskMapperUse: 'Create GM watch prompts for physical bottleneck zones and sightline risk areas identified in layout audits.',
+    mjwOperatorToolkitUse: 'Bundle with RoomReady Ops for a unified pre-shift readiness and script consistency dashboard.',
+    pocketBaseIntegration: 'Production persistence via PocketBase at VITE_POCKETBASE_URL. Collections: gms_rooms, gms_scripts, gms_script_versions, gms_hint_ladders, gms_pronunciation_terms, gms_acknowledgements.',
+    netlifyFunctionExport: 'Production server-side exports are available through /.netlify/functions/export-gms-data when PocketBase service credentials are configured.',
+  };
+}
+
+export function buildRoomPacketPayload(state: AppState, roomId: string): RoomPacketPayload | null {
   const room = state.rooms.find((r) => r.id === roomId);
-  if (!room) return '{}';
+  if (!room) return null;
 
   const scripts = state.scripts.filter((s) => s.roomId === roomId);
   const scriptIds = scripts.map((s) => s.id);
@@ -19,10 +137,7 @@ export function exportRoomJSON(state: AppState, roomId: string): string {
     currentVersion: scriptVersions.find((v) => v.id === script.currentVersionId) ?? null,
   }));
 
-  const payload = {
-    version: '1.0',
-    sourceApp: 'GM Script Library',
-    exportedAt: new Date().toISOString(),
+  return {
     room,
     scripts: scriptsWithCurrentVersion,
     scriptVersions,
@@ -33,27 +148,27 @@ export function exportRoomJSON(state: AppState, roomId: string): string {
       return { ...a, staffName: staff?.name ?? 'Unknown', staffRole: staff?.role ?? 'Unknown' };
     }),
     scriptReadinessAudit: auditResult,
-    integrationHints: {
-      recommendedDestinations: [
-        'RoomReady Ops',
-        'Puzzle Flow Visualizer',
-        'Puzzle Dependency Auditor',
-        'LockMap Studio',
-        'Room Layout Risk Mapper',
-        'MJW Operator Toolkit',
-      ],
-      roomReadyOpsUse: 'Convert current-script acknowledgement status into pre-shift readiness tasks. Flag any staff with outstanding acknowledgements as a pre-game blocker.',
-      puzzleFlowUse: 'Associate hint ladders with puzzle flow stages. Import stage labels from Puzzle Flow Visualizer to auto-scaffold hint ladder entries.',
-      puzzleDependencyAuditorUse: 'Use dependency audit results to identify high-risk progression nodes and auto-suggest hint ladder coverage.',
-      lockMapStudioUse: 'Import ambiguous lock and answer notes as GM hint annotations to reduce over-hinting on unclear locks.',
-      roomLayoutRiskMapperUse: 'Create GM watch prompts for physical bottleneck zones and sightline risk areas identified in layout audits.',
-      mjwOperatorToolkitUse: 'Bundle with RoomReady Ops for a unified pre-shift readiness and script consistency dashboard.',
-      futurePocketBaseIntegration: 'Production persistence via PocketBase at VITE_POCKETBASE_URL. Collections: gms_rooms, gms_scripts, gms_script_versions, gms_hint_ladders, gms_pronunciation_terms, gms_acknowledgements.',
-      futureNetlifyFunctionAI: 'AI-assisted script rewriting via Netlify serverless function. Rewrites tone without altering required safety or policy blocks. Requires ANTHROPIC_API_KEY on server side only.',
-    },
+    integrationHints: roomIntegrationHints(),
   };
+}
 
-  return JSON.stringify(payload, null, 2);
+export function buildRoomPacketExport(state: AppState, roomId: string): ExportEnvelope<RoomPacketPayload> | null {
+  const payload = buildRoomPacketPayload(state, roomId);
+  return payload ? envelope('room_packet', payload, 'room_packet') : null;
+}
+
+export function exportRoomJSON(state: AppState, roomId: string): string {
+  const packet = buildRoomPacketExport(state, roomId);
+  if (!packet) return '{}';
+
+  return JSON.stringify(
+    {
+      ...packet,
+      ...packet.payload,
+    },
+    null,
+    2
+  );
 }
 
 export function exportRoomMarkdown(state: AppState, roomId: string): string {
@@ -67,7 +182,8 @@ export function exportRoomMarkdown(state: AppState, roomId: string): string {
   const lines: string[] = [];
 
   lines.push(`# GM Script Library — Room Script Packet`);
-  lines.push(`**Schema Version:** 1.0`);
+  lines.push(`**Schema Version:** ${GMS_EXPORT_SCHEMA_VERSION}`);
+  lines.push(`**Export Type:** room_packet`);
   lines.push(`**Room:** ${room.name}`);
   lines.push(`**Theme:** ${room.theme}`);
   lines.push(`**Duration:** ${room.durationMinutes} minutes`);
@@ -217,13 +333,9 @@ export function exportRoomMarkdown(state: AppState, roomId: string): string {
   return lines.join('\n');
 }
 
-export function exportAcknowledgementReportJSON(state: AppState, filters: AcknowledgementReportFilters = {}): string {
+export function buildAcknowledgementReportPayload(state: AppState, filters: AcknowledgementReportFilters = {}) {
   const rows = buildAcknowledgementReportRows(state, filters);
-  const payload = {
-    version: '1.0',
-    sourceApp: 'GM Script Library',
-    reportType: 'staff_acknowledgements',
-    exportedAt: new Date().toISOString(),
+  return {
     filters,
     summary: {
       totalRows: rows.length,
@@ -236,8 +348,11 @@ export function exportAcknowledgementReportJSON(state: AppState, filters: Acknow
     },
     rows,
   };
+}
 
-  return JSON.stringify(payload, null, 2);
+export function exportAcknowledgementReportJSON(state: AppState, filters: AcknowledgementReportFilters = {}): string {
+  const report = envelope('staff_acknowledgement_report', buildAcknowledgementReportPayload(state, filters), 'staff_acknowledgements');
+  return JSON.stringify(report, null, 2);
 }
 
 export function exportAcknowledgementReportMarkdown(state: AppState, filters: AcknowledgementReportFilters = {}): string {
@@ -246,6 +361,7 @@ export function exportAcknowledgementReportMarkdown(state: AppState, filters: Ac
   const lines: string[] = [];
 
   lines.push('# GM Script Library — Staff Acknowledgement Compliance Report');
+  lines.push(`**Schema Version:** ${GMS_EXPORT_SCHEMA_VERSION}`);
   lines.push(`**Exported:** ${new Date().toLocaleString()}`);
   lines.push(`**Rows:** ${rows.length}`);
   lines.push(`**Ready:** ${rows.filter((row) => row.status === 'current').length}`);
@@ -291,19 +407,15 @@ export function exportAcknowledgementReportMarkdown(state: AppState, filters: Ac
   return lines.join('\n');
 }
 
-export function exportReadinessJSON(
+export function buildReadinessReportPayload(
   state: AppState,
   auditResults: ScriptReadinessResult[] = runAllAudits(state),
   globalIssues = runGlobalAuditIssues(state)
-): string {
+) {
   const allIssues = [...auditResults.flatMap((result) => result.issues), ...globalIssues];
-  const payload = {
-    version: '1.0',
-    sourceApp: 'GM Script Library',
-    reportType: 'readiness_audit',
-    exportedAt: new Date().toISOString(),
+  return {
     metadata: {
-      generatedAt: auditResults[0]?.generatedAt ?? new Date().toISOString(),
+      generatedAt: auditResults[0]?.generatedAt ?? nowIso(),
       dataSource: auditResults[0]?.dataSource ?? 'local',
       roomCount: state.rooms.length,
       issueCount: allIssues.length,
@@ -328,8 +440,15 @@ export function exportReadinessJSON(
     })),
     globalIssues,
   };
+}
 
-  return JSON.stringify(payload, null, 2);
+export function exportReadinessJSON(
+  state: AppState,
+  auditResults: ScriptReadinessResult[] = runAllAudits(state),
+  globalIssues = runGlobalAuditIssues(state)
+): string {
+  const report = envelope('readiness_audit_report', buildReadinessReportPayload(state, auditResults, globalIssues), 'readiness_audit');
+  return JSON.stringify(report, null, 2);
 }
 
 export function exportReadinessMarkdown(
@@ -342,6 +461,7 @@ export function exportReadinessMarkdown(
   const lines: string[] = [];
 
   lines.push('# GM Script Library — Readiness Audit Report');
+  lines.push(`**Schema Version:** ${GMS_EXPORT_SCHEMA_VERSION}`);
   lines.push(`**Exported:** ${new Date().toLocaleString()}`);
   lines.push(`**Generated:** ${auditResults[0]?.generatedAt ? new Date(auditResults[0].generatedAt).toLocaleString() : new Date().toLocaleString()}`);
   lines.push(`**Data Source:** ${auditResults[0]?.dataSource ?? 'local'}`);
@@ -400,6 +520,253 @@ export function exportReadinessMarkdown(
   lines.push('*Generated by GM Script Library · MJW Personal App Platform*');
 
   return lines.join('\n');
+}
+
+export function buildFullBackupPayload(state: AppState) {
+  return {
+    state,
+    counts: {
+      rooms: state.rooms.length,
+      scripts: state.scripts.length,
+      scriptVersions: state.scriptVersions.length,
+      hintLadders: state.hintLadders.length,
+      pronunciationTerms: state.pronunciationTerms.length,
+      staffMembers: state.staffMembers.length,
+      acknowledgements: state.acknowledgements.length,
+      auditEvents: state.auditEvents?.length ?? 0,
+    },
+    restoreGuidance: {
+      safeDefault: 'Import room packets first for scoped restore. Use full backup restore only from a trusted GM Script Library export.',
+      supportedClientRestore: ['room_packet'],
+      intendedAdminRestore: ['full_backup'],
+    },
+  };
+}
+
+export function exportFullBackupJSON(state: AppState): string {
+  return JSON.stringify(envelope('full_backup', buildFullBackupPayload(state), 'full_backup'), null, 2);
+}
+
+export function buildIntegrationPacketPayload(state: AppState) {
+  const auditResults = runAllAudits(state);
+  const globalIssues = runGlobalAuditIssues(state);
+  return {
+    rooms: state.rooms.map((room) => ({
+      id: room.id,
+      name: room.name,
+      status: room.status,
+      difficulty: room.difficulty,
+      durationMinutes: room.durationMinutes,
+      readinessScore: auditResults.find((result) => result.roomId === room.id)?.score ?? null,
+      scriptCount: state.scripts.filter((script) => script.roomId === room.id).length,
+      activeHintLadderCount: state.hintLadders.filter((hint) => hint.roomId === room.id).length,
+      pronunciationTermCount: state.pronunciationTerms.filter((term) => term.roomId === room.id).length,
+    })),
+    readiness: buildReadinessReportPayload(state, auditResults, globalIssues),
+    acknowledgements: buildAcknowledgementReportPayload(state),
+    downstreamConsumers: [
+      'RoomReady Ops',
+      'Puzzle Flow Visualizer',
+      'Puzzle Dependency Auditor',
+      'LockMap Studio',
+      'Room Layout Risk Mapper',
+      'MJW Operator Toolkit',
+    ],
+  };
+}
+
+export function exportIntegrationPacketJSON(state: AppState): string {
+  return JSON.stringify(envelope('integration_packet', buildIntegrationPacketPayload(state), 'integration_packet'), null, 2);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function extractRoomPacketPayload(parsed: unknown): RoomPacketPayload | null {
+  if (!isRecord(parsed)) return null;
+  if (parsed.exportType === 'room_packet' && isRecord(parsed.payload)) return parsed.payload as unknown as RoomPacketPayload;
+  if (isRecord(parsed.room) && Array.isArray(parsed.scripts)) return parsed as unknown as RoomPacketPayload;
+  return null;
+}
+
+function hasString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function uniqueCount<T extends { id: string }>(records: T[]): number {
+  return new Set(records.map((record) => record.id)).size;
+}
+
+function validateRecords<T extends { id: string }>(records: T[], label: string, errors: string[]): void {
+  records.forEach((record, index) => {
+    if (!hasString(record.id)) errors.push(`${label} at index ${index} is missing a stable id.`);
+  });
+  if (uniqueCount(records) !== records.length) errors.push(`${label} contains duplicate ids inside the imported packet.`);
+}
+
+export function previewRoomPacketImport(rawJson: string, currentState: AppState): RoomPacketImportPreview {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch {
+    return {
+      valid: false,
+      errors: ['The selected file is not valid JSON.'],
+      warnings: [],
+      roomName: 'Unknown room',
+      roomId: '',
+      counts: { rooms: 0, scripts: 0, scriptVersions: 0, hintLadders: 0, pronunciationTerms: 0, acknowledgements: 0 },
+      duplicates: { room: false, scripts: 0, scriptVersions: 0, hintLadders: 0, pronunciationTerms: 0, acknowledgements: 0 },
+    };
+  }
+
+  const packet = extractRoomPacketPayload(parsed);
+  if (!packet) {
+    errors.push('This JSON is not a GM Script Library room_packet export.');
+  }
+
+  const room = packet?.room;
+  const scripts = packet?.scripts ?? [];
+  const scriptVersions = packet?.scriptVersions ?? [];
+  const hintLadders = packet?.hintLadders ?? [];
+  const pronunciationGuide = packet?.pronunciationGuide ?? [];
+  const acknowledgements = packet?.acknowledgements ?? [];
+
+  if (!room || !hasString(room.id) || !hasString(room.name)) errors.push('The room packet must include a room with id and name.');
+  if (!Array.isArray(scripts)) errors.push('The room packet scripts field must be an array.');
+  if (!Array.isArray(scriptVersions)) errors.push('The room packet scriptVersions field must be an array.');
+  if (!Array.isArray(hintLadders)) errors.push('The room packet hintLadders field must be an array.');
+  if (!Array.isArray(pronunciationGuide)) errors.push('The room packet pronunciationGuide field must be an array.');
+  if (!Array.isArray(acknowledgements)) errors.push('The room packet acknowledgements field must be an array.');
+
+  validateRecords(scripts, 'scripts', errors);
+  validateRecords(scriptVersions, 'scriptVersions', errors);
+  validateRecords(hintLadders, 'hintLadders', errors);
+  validateRecords(pronunciationGuide, 'pronunciationGuide', errors);
+  validateRecords(acknowledgements, 'acknowledgements', errors);
+
+  if (room) {
+    scripts.forEach((script) => {
+      if (script.roomId !== room.id) errors.push(`Script ${script.id} belongs to room ${script.roomId}, not imported room ${room.id}.`);
+    });
+    hintLadders.forEach((ladder) => {
+      if (ladder.roomId !== room.id) errors.push(`Hint ladder ${ladder.id} belongs to room ${ladder.roomId}, not imported room ${room.id}.`);
+    });
+    pronunciationGuide.forEach((term) => {
+      if (term.roomId !== room.id) errors.push(`Pronunciation term ${term.id} belongs to room ${term.roomId}, not imported room ${room.id}.`);
+    });
+  }
+
+  const scriptIds = new Set(scripts.map((script) => script.id));
+  scriptVersions.forEach((version) => {
+    if (!scriptIds.has(version.scriptId)) errors.push(`Script version ${version.id} references missing script ${version.scriptId}.`);
+  });
+  acknowledgements.forEach((ack) => {
+    if (!scriptIds.has(ack.scriptId)) warnings.push(`Acknowledgement ${ack.id} references staff/script context that may not exist after import.`);
+  });
+
+  const duplicates = {
+    room: Boolean(room && currentState.rooms.some((existing) => existing.id === room.id)),
+    scripts: scripts.filter((script) => currentState.scripts.some((existing) => existing.id === script.id)).length,
+    scriptVersions: scriptVersions.filter((version) => currentState.scriptVersions.some((existing) => existing.id === version.id)).length,
+    hintLadders: hintLadders.filter((ladder) => currentState.hintLadders.some((existing) => existing.id === ladder.id)).length,
+    pronunciationTerms: pronunciationGuide.filter((term) => currentState.pronunciationTerms.some((existing) => existing.id === term.id)).length,
+    acknowledgements: acknowledgements.filter((ack) => currentState.acknowledgements.some((existing) => existing.id === ack.id)).length,
+  };
+
+  if (duplicates.room) warnings.push('A room with this id already exists. Merge will update matching imported records; overwrite will replace the existing room packet records.');
+  if (duplicates.scripts + duplicates.scriptVersions + duplicates.hintLadders + duplicates.pronunciationTerms + duplicates.acknowledgements > 0) {
+    warnings.push('Duplicate record ids were found. Matching imported records will replace existing records with the same id.');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+    roomName: room?.name ?? 'Unknown room',
+    roomId: room?.id ?? '',
+    counts: {
+      rooms: room ? 1 : 0,
+      scripts: scripts.length,
+      scriptVersions: scriptVersions.length,
+      hintLadders: hintLadders.length,
+      pronunciationTerms: pronunciationGuide.length,
+      acknowledgements: acknowledgements.length,
+    },
+    duplicates,
+    packet: errors.length === 0 ? packet ?? undefined : undefined,
+  };
+}
+
+function stripComputedScriptFields(script: Script & { currentVersion?: ScriptVersion | null }): Script {
+  const { currentVersion: _currentVersion, ...cleanScript } = script;
+  return cleanScript;
+}
+
+function stripComputedAcknowledgementFields(acknowledgement: Acknowledgement & { staffName?: string; staffRole?: string }): Acknowledgement {
+  const { staffName: _staffName, staffRole: _staffRole, ...cleanAcknowledgement } = acknowledgement;
+  return cleanAcknowledgement;
+}
+
+function upsertById<T extends { id: string }>(current: T[], incoming: T[]): T[] {
+  const incomingIds = new Set(incoming.map((record) => record.id));
+  return [...current.filter((record) => !incomingIds.has(record.id)), ...incoming];
+}
+
+function buildImportAuditEvent(packet: RoomPacketPayload, mode: ImportMode): AuditEvent {
+  const timestamp = nowIso();
+  return {
+    id: `audit_import_${packet.room.id}_${Date.now()}`,
+    action: 'import',
+    entityType: 'room_packet',
+    entityId: packet.room.id,
+    roomId: packet.room.id,
+    summary: `${mode === 'overwrite_room' ? 'Overwrote' : 'Merged'} room packet import for ${packet.room.name}`,
+    metadata: {
+      mode,
+      schemaVersion: GMS_EXPORT_SCHEMA_VERSION,
+      scripts: packet.scripts.length,
+      scriptVersions: packet.scriptVersions.length,
+      hintLadders: packet.hintLadders.length,
+      pronunciationTerms: packet.pronunciationGuide.length,
+      acknowledgements: packet.acknowledgements.length,
+    },
+    createdAt: timestamp,
+  };
+}
+
+export function applyRoomPacketImport(currentState: AppState, packet: RoomPacketPayload, mode: ImportMode): AppState {
+  const cleanScripts = packet.scripts.map(stripComputedScriptFields);
+  const cleanAcknowledgements = packet.acknowledgements.map(stripComputedAcknowledgementFields);
+  const packetScriptIds = new Set(cleanScripts.map((script) => script.id));
+
+  if (mode === 'overwrite_room') {
+    return {
+      ...currentState,
+      rooms: [...currentState.rooms.filter((room) => room.id !== packet.room.id), packet.room],
+      scripts: [...currentState.scripts.filter((script) => script.roomId !== packet.room.id), ...cleanScripts],
+      scriptVersions: [...currentState.scriptVersions.filter((version) => !packetScriptIds.has(version.scriptId)), ...packet.scriptVersions],
+      hintLadders: [...currentState.hintLadders.filter((ladder) => ladder.roomId !== packet.room.id), ...packet.hintLadders],
+      pronunciationTerms: [...currentState.pronunciationTerms.filter((term) => term.roomId !== packet.room.id), ...packet.pronunciationGuide],
+      acknowledgements: [...currentState.acknowledgements.filter((ack) => !packetScriptIds.has(ack.scriptId)), ...cleanAcknowledgements],
+      auditEvents: [...(currentState.auditEvents ?? []), buildImportAuditEvent(packet, mode)],
+    };
+  }
+
+  return {
+    ...currentState,
+    rooms: upsertById(currentState.rooms, [packet.room]),
+    scripts: upsertById(currentState.scripts, cleanScripts),
+    scriptVersions: upsertById(currentState.scriptVersions, packet.scriptVersions),
+    hintLadders: upsertById(currentState.hintLadders, packet.hintLadders),
+    pronunciationTerms: upsertById(currentState.pronunciationTerms, packet.pronunciationGuide),
+    acknowledgements: upsertById(currentState.acknowledgements, cleanAcknowledgements),
+    auditEvents: [...(currentState.auditEvents ?? []), buildImportAuditEvent(packet, mode)],
+  };
 }
 
 export function downloadFile(content: string, filename: string, mimeType: string): void {
