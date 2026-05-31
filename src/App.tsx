@@ -4,6 +4,7 @@ import { LayoutDashboard, DoorOpen, BookOpen, File as FileEdit, History, Mic, La
 import { AppState, Room, Script, ScriptVersion, HintLadder, PronunciationTerm, StaffMember, Acknowledgement, AuditEvent } from './types';
 import { AuthUser, canManageData, linkAuthUserToStaff } from './lib/auth';
 import { markScriptAcknowledgementsSuperseded } from './lib/acknowledgements';
+import { canMakeVersionCurrent, calculateSafetyBlockChecksum, validateSafetyBlocks, VersionGovernanceAction } from './lib/versionGovernance';
 import { dataAdapter, initialEmptyAppState } from './lib/dataAdapter';
 import { ToastProvider } from './lib/toast';
 
@@ -168,31 +169,131 @@ export default function App() {
     });
   }
 
+  function buildAuditEvent(action: AuditEvent['action'], entityType: AuditEvent['entityType'], entityId: string, summary: string, metadata: Record<string, unknown> = {}): AuditEvent {
+    return {
+      id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      action,
+      entityType,
+      entityId,
+      actorStaffId: currentUser?.staffMemberId ?? null,
+      actorAuthUserId: currentUser?.authUserId ?? null,
+      summary,
+      metadata,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
   function saveVersion(version: ScriptVersion) {
+    const versionWithChecksum: ScriptVersion = {
+      ...version,
+      safetyBlockChecksum: version.safetyBlockChecksum || calculateSafetyBlockChecksum(version.requiredBlocks, version.bodyMarkdown),
+    };
     setState((s) => {
       const exists = s.scriptVersions.find((v) => v.id === version.id);
+      const script = s.scripts.find((candidate) => candidate.id === version.scriptId);
+      const auditAction: AuditEvent['action'] = version.approvalStatus === 'in_review' ? 'submit' : 'create';
+      const auditEvent = buildAuditEvent(
+        auditAction,
+        'script_version',
+        version.id,
+        `${auditAction === 'submit' ? 'Submitted' : 'Created'} v${version.versionNumber}${script ? ` for ${script.title}` : ''}`,
+        { scriptId: version.scriptId, versionNumber: version.versionNumber, approvalStatus: version.approvalStatus }
+      );
       if (exists) {
-        return { ...s, scriptVersions: s.scriptVersions.map((v) => (v.id === version.id ? version : v)) };
+        return { ...s, scriptVersions: s.scriptVersions.map((v) => (v.id === version.id ? versionWithChecksum : v)), auditEvents: [...(s.auditEvents ?? []), auditEvent] };
       }
-      return { ...s, scriptVersions: [...s.scriptVersions, version] };
+      return { ...s, scriptVersions: [...s.scriptVersions, versionWithChecksum], auditEvents: [...(s.auditEvents ?? []), auditEvent] };
+    });
+  }
+
+  function updateVersionGovernance(versionId: string, action: VersionGovernanceAction, notes?: string) {
+    setState((s) => {
+      const version = s.scriptVersions.find((candidate) => candidate.id === versionId);
+      if (!version) return s;
+      const script = s.scripts.find((candidate) => candidate.id === version.scriptId);
+      const previousVersion = version.previousVersionId ? s.scriptVersions.find((candidate) => candidate.id === version.previousVersionId) ?? null : null;
+      const now = new Date().toISOString();
+      let nextVersion: ScriptVersion = version;
+      let auditAction: AuditEvent['action'] = action === 'make-current' ? 'make-current' : action;
+      let summary = `${action} v${version.versionNumber}${script ? ` for ${script.title}` : ''}`;
+
+      if (action === 'submit') {
+        nextVersion = { ...version, approvalStatus: 'in_review', submittedBy: currentUser?.staffMemberId ?? version.submittedBy };
+        summary = `Submitted v${version.versionNumber}${script ? ` for ${script.title}` : ''} for review`;
+      }
+
+      if (action === 'approve') {
+        const safety = validateSafetyBlocks(version, previousVersion);
+        if (!safety.valid) return s;
+        nextVersion = {
+          ...version,
+          approvalStatus: 'approved',
+          approvedBy: currentUser?.name ?? 'Unknown approver',
+          approvedAt: now,
+          reviewedBy: currentUser?.staffMemberId,
+          rejectedAt: null,
+          safetyBlockChecksum: safety.checksum,
+        };
+        auditAction = 'approve';
+        summary = `Approved v${version.versionNumber}${script ? ` for ${script.title}` : ''}`;
+      }
+
+      if (action === 'reject') {
+        nextVersion = { ...version, approvalStatus: 'rejected', reviewedBy: currentUser?.staffMemberId, rejectedAt: now };
+        auditAction = 'reject';
+        summary = `Rejected v${version.versionNumber}${script ? ` for ${script.title}` : ''}`;
+      }
+
+      if (action === 'archive') {
+        nextVersion = { ...version, approvalStatus: 'archived' };
+        auditAction = 'archive';
+        summary = `Archived v${version.versionNumber}${script ? ` for ${script.title}` : ''}`;
+      }
+
+      const auditEvent = buildAuditEvent(auditAction, 'script_version', version.id, summary, {
+        scriptId: version.scriptId,
+        versionNumber: version.versionNumber,
+        previousStatus: version.approvalStatus,
+        nextStatus: nextVersion.approvalStatus,
+        notes,
+      });
+
+      return {
+        ...s,
+        scriptVersions: s.scriptVersions.map((candidate) => (candidate.id === versionId ? nextVersion : candidate)),
+        auditEvents: [...(s.auditEvents ?? []), auditEvent],
+      };
     });
   }
 
   function setCurrentVersion(scriptId: string, versionId: string) {
-    setState((s) => ({
-      ...s,
-      scripts: s.scripts.map((sc) =>
-        sc.id === scriptId
-          ? { ...sc, currentVersionId: versionId, status: 'current', updatedAt: new Date().toISOString() }
-          : sc
-      ),
-      scriptVersions: s.scriptVersions.map((v) =>
-        v.scriptId === scriptId
-          ? { ...v, approvalStatus: v.id === versionId ? 'approved' : v.approvalStatus }
-          : v
-      ),
-      acknowledgements: markScriptAcknowledgementsSuperseded(s.acknowledgements, scriptId, versionId),
-    }));
+    setState((s) => {
+      const script = s.scripts.find((candidate) => candidate.id === scriptId);
+      const targetVersion = s.scriptVersions.find((candidate) => candidate.id === versionId);
+      if (!script || !targetVersion || !canMakeVersionCurrent(targetVersion)) return s;
+      const now = new Date().toISOString();
+      const isRollback = Boolean(script.currentVersionId && targetVersion.createdAt < (s.scriptVersions.find((candidate) => candidate.id === script.currentVersionId)?.createdAt ?? targetVersion.createdAt));
+      const auditEvent = buildAuditEvent(isRollback ? 'rollback' : 'make-current', 'script_version', versionId, `${isRollback ? 'Rolled back' : 'Made'} ${script.title} current at v${targetVersion.versionNumber}`, {
+        scriptId,
+        previousVersionId: script.currentVersionId,
+        newVersionId: versionId,
+      });
+      return {
+        ...s,
+        scripts: s.scripts.map((sc) =>
+          sc.id === scriptId
+            ? { ...sc, currentVersionId: versionId, status: 'current', updatedAt: now }
+            : sc
+        ),
+        scriptVersions: s.scriptVersions.map((v) =>
+          v.scriptId === scriptId
+            ? { ...v, approvalStatus: v.id === versionId ? 'current' : (v.id === script.currentVersionId && v.approvalStatus === 'current' ? 'archived' : v.approvalStatus) }
+            : v
+        ),
+        acknowledgements: markScriptAcknowledgementsSuperseded(s.acknowledgements, scriptId, versionId),
+        auditEvents: [...(s.auditEvents ?? []), auditEvent],
+      };
+    });
   }
 
   function addHintLadder(ladder: HintLadder) {
@@ -461,7 +562,7 @@ export default function App() {
                     )
                   )}
                   {screen === 'history' && (
-                    <VersionHistory state={state} currentUser={currentUser} onSetCurrentVersion={setCurrentVersion} />
+                    <VersionHistory state={state} currentUser={currentUser} onSetCurrentVersion={setCurrentVersion} onUpdateVersionGovernance={updateVersionGovernance} />
                   )}
                   {screen === 'hints' && (
                     canManage ? (

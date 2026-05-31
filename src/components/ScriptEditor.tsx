@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Save, Plus, Tag, X, Info, AlertCircle } from 'lucide-react';
 import { AppState, Script, ScriptVersion, ScriptType, ScriptStatus } from '../types';
-import { AuthUser, canApproveVersions, displayNameForAuthUser } from '../lib/auth';
+import { AuthUser, displayNameForAuthUser } from '../lib/auth';
 import { useToast } from '../lib/useToast';
 
 interface Props {
@@ -25,10 +25,9 @@ const scriptTypeOptions: { value: ScriptType; label: string }[] = [
   { value: 'training_note', label: 'Training Note' },
 ];
 
-export default function ScriptEditor({ state, editingScriptId, currentUser, onSaveScript, onSaveVersion, onSetCurrentVersion }: Props) {
+export default function ScriptEditor({ state, editingScriptId, currentUser, onSaveScript, onSaveVersion }: Props) {
   const { toast } = useToast();
   const existingScript = editingScriptId ? state.scripts.find((s) => s.id === editingScriptId) ?? null : null;
-  const canApprove = canApproveVersions(currentUser);
 
   const [scriptForm, setScriptForm] = useState({
     roomId: existingScript?.roomId ?? (state.rooms[0]?.id ?? ''),
@@ -51,7 +50,7 @@ export default function ScriptEditor({ state, editingScriptId, currentUser, onSa
     versionNumber: '',
     requiredBlocksRaw: latestVersion?.requiredBlocks.join(', ') ?? '',
     optionalBlocksRaw: latestVersion?.optionalBlocks.join(', ') ?? '',
-    makeCurrentOnSave: false,
+    submitForReview: true,
   });
 
   useEffect(() => {
@@ -81,6 +80,7 @@ export default function ScriptEditor({ state, editingScriptId, currentUser, onSa
     const e: Record<string, string> = {};
     if (!scriptForm.title.trim()) e.title = 'Script title is required.';
     if (!scriptForm.roomId) e.roomId = 'A room must be selected.';
+    if (versionForm.bodyMarkdown.trim() && !versionForm.changeSummary.trim()) e.changeSummary = 'A change summary is required for every new version.';
     return e;
   }
 
@@ -108,19 +108,17 @@ export default function ScriptEditor({ state, editingScriptId, currentUser, onSa
         requiredBlocks: versionForm.requiredBlocksRaw.split(',').map((s) => s.trim()).filter(Boolean),
         optionalBlocks: versionForm.optionalBlocksRaw.split(',').map((s) => s.trim()).filter(Boolean),
         toneNotes: versionForm.toneNotes,
-        changeSummary: versionForm.changeSummary || 'New version.',
-        approvalStatus: versionForm.makeCurrentOnSave && canApprove ? 'approved' : 'draft',
-        approvedBy: versionForm.makeCurrentOnSave && canApprove ? displayNameForAuthUser(currentUser) : '',
-        approvedAt: versionForm.makeCurrentOnSave && canApprove ? now : null,
+        changeSummary: versionForm.changeSummary.trim(),
+        approvalStatus: versionForm.submitForReview ? 'in_review' : 'draft',
+        approvedBy: '',
+        approvedAt: null,
         createdAt: now,
         createdBy: currentUser?.staffMemberId,
-        submittedBy: currentUser?.staffMemberId,
-        reviewedBy: versionForm.makeCurrentOnSave && canApprove ? currentUser?.staffMemberId : undefined,
+        submittedBy: versionForm.submitForReview ? currentUser?.staffMemberId : undefined,
         previousVersionId: latestVersion?.id ?? null,
       };
       onSaveVersion(version);
-      if (versionForm.makeCurrentOnSave && canApprove) onSetCurrentVersion(script.id, version.id);
-      toast(existingScript ? `"${script.title}" updated with v${vn}` : `"${script.title}" created with v${vn}`);
+      toast(existingScript ? `"${script.title}" updated with v${vn} (${version.approvalStatus.replace('_', ' ')})` : `"${script.title}" created with v${vn} (${version.approvalStatus.replace('_', ' ')})`);
     } else {
       toast(existingScript ? `"${script.title}" metadata saved` : `"${script.title}" created`);
     }
@@ -237,15 +235,16 @@ export default function ScriptEditor({ state, editingScriptId, currentUser, onSa
               </div>
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">Change Summary</label>
-              <input className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500" placeholder="Briefly describe what changed in this version..." value={versionForm.changeSummary} onChange={(e) => setVersionForm((f) => ({ ...f, changeSummary: e.target.value }))} />
+              <label className="block text-xs font-medium text-slate-400 mb-1">Change Summary *</label>
+              <input className={`w-full bg-slate-700 border ${errors.changeSummary ? 'border-red-500' : 'border-slate-600'} rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500`} placeholder="Briefly describe what changed in this version..." value={versionForm.changeSummary} onChange={(e) => setVersionForm((f) => ({ ...f, changeSummary: e.target.value }))} />
+              {errors.changeSummary && <p className="text-xs text-red-400 mt-1">{errors.changeSummary}</p>}
             </div>
             <div className="rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-2 text-xs text-slate-400">
-              Approval identity: <span className="text-slate-200">{displayNameForAuthUser(currentUser)}</span>. Only Managers and Owners can approve and publish a current version.
+              Creator identity: <span className="text-slate-200">{displayNameForAuthUser(currentUser)}</span>. New versions are saved as drafts or submitted for review; approval and publishing happen from Version History.
             </div>
-            <label className={`flex items-center gap-3 ${canApprove ? 'cursor-pointer group' : 'cursor-not-allowed opacity-60'}`}>
-              <input type="checkbox" disabled={!canApprove} className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-800" checked={versionForm.makeCurrentOnSave && canApprove} onChange={(e) => setVersionForm((f) => ({ ...f, makeCurrentOnSave: e.target.checked }))} />
-              <span className="text-sm text-slate-300 group-hover:text-slate-100 transition-colors">Mark as current approved version on save</span>
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <input type="checkbox" className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-800" checked={versionForm.submitForReview} onChange={(e) => setVersionForm((f) => ({ ...f, submitForReview: e.target.checked }))} />
+              <span className="text-sm text-slate-300 group-hover:text-slate-100 transition-colors">Submit this version for manager review on save</span>
             </label>
             <div className="flex items-start gap-2 p-3 bg-blue-950/30 border border-blue-800/40 rounded-lg text-xs text-blue-300/80">
               <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-blue-400" />

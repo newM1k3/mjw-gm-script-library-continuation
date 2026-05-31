@@ -19,7 +19,7 @@ export type ScriptStatus =
   | 'archived'
   | 'needs_update';
 
-export type ApprovalStatus = 'draft' | 'in_review' | 'approved' | 'rejected';
+export type ApprovalStatus = 'draft' | 'in_review' | 'approved' | 'rejected' | 'current' | 'archived';
 
 export type SpoilerLevel = 'low' | 'medium' | 'high';
 
@@ -66,6 +66,10 @@ export type AuditEventAction =
   | 'update'
   | 'delete'
   | 'approve'
+  | 'submit'
+  | 'reject'
+  | 'archive'
+  | 'rollback'
   | 'make-current'
   | 'acknowledge'
   | 'export'
