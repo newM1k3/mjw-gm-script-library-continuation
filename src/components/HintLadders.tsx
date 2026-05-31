@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Plus, CreditCard as Edit2, Save, X, Trash2, ChevronDown, ChevronUp, AlertTriangle, Archive, ArrowDown, ArrowUp, Eye } from 'lucide-react';
 import { AppState, HintLadder, HintStep, SpoilerLevel } from '../types';
 import { useToast } from '../lib/useToast';
+import ConfirmModal from './ConfirmModal';
 
 interface Props {
   state: AppState;
@@ -39,6 +40,7 @@ export default function HintLadders({ state, onAddLadder, onUpdateLadder }: Prop
   const [form, setForm] = useState(emptyLadder(state.rooms[0]?.id ?? ''));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [pendingArchiveLadder, setPendingArchiveLadder] = useState<HintLadder | null>(null);
 
   const filteredLadders = useMemo(
     () => state.hintLadders.filter((h) => (filterRoom === 'all' || h.roomId === filterRoom) && (showArchived || !isArchived(h))),
@@ -101,10 +103,15 @@ export default function HintLadders({ state, onAddLadder, onUpdateLadder }: Prop
     setEditing(null); setErrors({}); setSaving(false);
   }
 
-  function handleArchive(ladder: HintLadder) {
-    if (!window.confirm(`Archive hint ladder "${ladder.puzzleLabel}"? It will be hidden from GM Mode but retained for exports and audit history.`)) return;
-    onUpdateLadder({ ...ladder, notes: `[ARCHIVED] ${cleanArchiveMarker(ladder.notes)}`.trim(), updatedAt: new Date().toISOString() });
-    toast(`Hint ladder "${ladder.puzzleLabel}" archived`);
+  function requestArchive(ladder: HintLadder) {
+    setPendingArchiveLadder(ladder);
+  }
+
+  function confirmArchive() {
+    if (!pendingArchiveLadder) return;
+    onUpdateLadder({ ...pendingArchiveLadder, notes: `[ARCHIVED] ${cleanArchiveMarker(pendingArchiveLadder.notes)}`.trim(), updatedAt: new Date().toISOString() });
+    toast(`Hint ladder "${pendingArchiveLadder.puzzleLabel}" archived`);
+    setPendingArchiveLadder(null);
   }
 
   function updateHint(index: number, field: keyof HintStep, value: string | number) {
@@ -245,7 +252,7 @@ export default function HintLadders({ state, onAddLadder, onUpdateLadder }: Prop
                     </div>
                     <div className="flex items-center gap-2 ml-4">
                       <button onClick={(e) => { e.stopPropagation(); handleEdit(ladder); }} className="p-1.5 text-slate-500 hover:text-slate-200 hover:bg-slate-700 rounded-lg transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-                      {!archived && <button onClick={(e) => { e.stopPropagation(); handleArchive(ladder); }} className="p-1.5 text-slate-500 hover:text-red-300 hover:bg-red-950/40 rounded-lg transition-colors"><Archive className="w-3.5 h-3.5" /></button>}
+                      {!archived && <button onClick={(e) => { e.stopPropagation(); requestArchive(ladder); }} className="p-1.5 text-slate-500 hover:text-red-300 hover:bg-red-950/40 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-400" aria-label={`Archive hint ladder ${ladder.puzzleLabel}`}><Archive className="w-3.5 h-3.5" /></button>}
                       {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
                     </div>
                   </div>
@@ -270,6 +277,17 @@ export default function HintLadders({ state, onAddLadder, onUpdateLadder }: Prop
           );
         })}
       </div>
+
+      {pendingArchiveLadder && (
+        <ConfirmModal
+          title={`Archive ${pendingArchiveLadder.puzzleLabel}?`}
+          message="This hint ladder will be hidden from GM Mode but retained for exports, readiness audits, and operational history."
+          confirmLabel="Archive ladder"
+          confirmDanger
+          onConfirm={confirmArchive}
+          onCancel={() => setPendingArchiveLadder(null)}
+        />
+      )}
 
       {filteredLadders.length === 0 && !adding && (
         <div className="flex flex-col items-center justify-center py-16 bg-slate-800/30 border border-dashed border-slate-700 rounded-xl">

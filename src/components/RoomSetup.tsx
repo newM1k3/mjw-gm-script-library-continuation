@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Plus, CreditCard as Edit2, Save, X, Clock, Star, Info, Archive } from 'lucide-react';
 import { Room, RoomStatus, RoomDifficulty, AppState } from '../types';
 import { useToast } from '../lib/useToast';
+import ConfirmModal from './ConfirmModal';
 
 interface Props {
   state: AppState;
@@ -38,6 +39,7 @@ export default function RoomSetup({ state, onAddRoom, onUpdateRoom }: Props) {
   const [form, setForm] = useState(emptyRoom());
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [pendingRetireRoom, setPendingRetireRoom] = useState<Room | null>(null);
 
   function normalizedName(value: string) {
     return value.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -90,12 +92,15 @@ export default function RoomSetup({ state, onAddRoom, onUpdateRoom }: Props) {
     setEditing(null); setErrors({}); setSaving(false);
   }
 
-  function handleRetire(room: Room) {
-    const scriptCount = state.scripts.filter((s) => s.roomId === room.id).length;
-    const confirmed = window.confirm(`Retire "${room.name}"? Existing scripts, exports, and audit history will remain available, but the room will be marked retired for operations. ${scriptCount} script${scriptCount === 1 ? '' : 's'} remain linked.`);
-    if (!confirmed) return;
-    onUpdateRoom({ ...room, status: 'retired', updatedAt: new Date().toISOString() });
-    toast(`Room "${room.name}" retired`);
+  function requestRetire(room: Room) {
+    setPendingRetireRoom(room);
+  }
+
+  function confirmRetire() {
+    if (!pendingRetireRoom) return;
+    onUpdateRoom({ ...pendingRetireRoom, status: 'retired', updatedAt: new Date().toISOString() });
+    toast(`Room "${pendingRetireRoom.name}" retired`);
+    setPendingRetireRoom(null);
   }
 
   function renderForm(onSave: () => void) {
@@ -174,7 +179,7 @@ export default function RoomSetup({ state, onAddRoom, onUpdateRoom }: Props) {
                     </div>
                     <div className="flex items-center gap-2">
                       <button onClick={() => handleEdit(room)} className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded-lg transition-colors" title="Edit room"><Edit2 className="w-4 h-4" /></button>
-                      {room.status !== 'retired' && <button onClick={() => handleRetire(room)} className="p-2 text-slate-400 hover:text-red-300 hover:bg-red-950/40 rounded-lg transition-colors" title="Retire room"><Archive className="w-4 h-4" /></button>}
+                      {room.status !== 'retired' && <button onClick={() => requestRetire(room)} className="p-2 text-slate-400 hover:text-red-300 hover:bg-red-950/40 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-400" title="Retire room" aria-label={`Retire ${room.name}`}><Archive className="w-4 h-4" /></button>}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-4 mt-4 text-xs text-slate-400">
@@ -195,6 +200,17 @@ export default function RoomSetup({ state, onAddRoom, onUpdateRoom }: Props) {
           );
         })}
       </div>
+
+      {pendingRetireRoom && (
+        <ConfirmModal
+          title={`Retire ${pendingRetireRoom.name}?`}
+          message={`Existing scripts, exports, and audit history will remain available, but the room will be marked retired for operations. ${state.scripts.filter((script) => script.roomId === pendingRetireRoom.id).length} linked script(s) remain attached.`}
+          confirmLabel="Retire room"
+          confirmDanger
+          onConfirm={confirmRetire}
+          onCancel={() => setPendingRetireRoom(null)}
+        />
+      )}
 
       {state.rooms.length === 0 && !adding && (
         <div className="flex flex-col items-center justify-center py-20 bg-slate-800/30 border border-dashed border-slate-700 rounded-xl">

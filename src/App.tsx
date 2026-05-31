@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, DoorOpen, BookOpen, File as FileEdit, History, Mic, Layers, Volume2, Users, ShieldCheck, Download, Menu, X, Clock, LogOut } from 'lucide-react';
+import { LayoutDashboard, DoorOpen, BookOpen, File as FileEdit, History, Mic, Layers, Volume2, Users, ShieldCheck, Download, Menu, X, Clock, LogOut, Search } from 'lucide-react';
 
 import { AppState, Room, Script, ScriptVersion, HintLadder, PronunciationTerm, StaffMember, Acknowledgement, AuditEvent } from './types';
 import { AuthUser, canManageData, linkAuthUserToStaff } from './lib/auth';
 import { markScriptAcknowledgementsSuperseded } from './lib/acknowledgements';
 import { canMakeVersionCurrent, calculateSafetyBlockChecksum, validateSafetyBlocks, VersionGovernanceAction } from './lib/versionGovernance';
 import { dataAdapter, initialEmptyAppState } from './lib/dataAdapter';
+import packageMetadata from '../package.json';
 import { ToastProvider } from './lib/toast';
 
 import Dashboard from './components/Dashboard';
@@ -35,6 +36,8 @@ type Screen =
   | 'audit'
   | 'export';
 
+const APP_VERSION = packageMetadata.version;
+
 const navItems: { id: Screen; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'rooms', label: 'Room Setup', icon: DoorOpen },
@@ -54,6 +57,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('dashboard');
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [quickNavValue, setQuickNavValue] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -120,6 +124,7 @@ export default function App() {
 
   function navigate(s: string) {
     setScreen(s as Screen);
+    setQuickNavValue('');
     setMobileNavOpen(false);
   }
 
@@ -486,7 +491,7 @@ export default function App() {
                 </div>
                 <div>
                   <div className="text-sm font-bold text-slate-100 leading-tight">GM Script</div>
-                  <div className="text-xs text-slate-500 leading-tight">Library</div>
+                  <div className="text-xs text-slate-500 leading-tight">Library · v{APP_VERSION}</div>
                 </div>
               </div>
 
@@ -499,7 +504,7 @@ export default function App() {
                       onClick={() => navigate(id)}
                       aria-current={active ? 'page' : undefined}
                       className={`
-                        w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm mb-0.5 transition-all
+                        w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm mb-0.5 transition-all focus:outline-none focus:ring-2 focus:ring-blue-400
                         ${active
                           ? 'bg-slate-800 text-slate-100 font-medium'
                           : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
@@ -519,7 +524,7 @@ export default function App() {
                     Demo Mode
                   </div>
                 )}
-                <div>MJW Platform · v1.0</div>
+                <div>MJW Platform · v{APP_VERSION}</div>
               </div>
             </aside>
 
@@ -543,11 +548,33 @@ export default function App() {
                   {navItems.find((n) => n.id === screen)?.label ?? 'GM Script Library'}
                 </h1>
                 <div className="ml-auto flex items-center gap-2 text-xs text-slate-500">
+                  <label className="hidden lg:flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-slate-300 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/30">
+                    <Search className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
+                    <span className="sr-only">Quick navigation</span>
+                    <select
+                      value={quickNavValue}
+                      onChange={(event) => {
+                        const nextScreen = event.target.value;
+                        setQuickNavValue(nextScreen);
+                        if (nextScreen) navigate(nextScreen);
+                      }}
+                      className="max-w-36 bg-transparent text-xs text-slate-200 focus:outline-none"
+                      aria-label="Quick navigation"
+                    >
+                      <option value="">Jump to screen…</option>
+                      {navItems.map((item) => (
+                        <option key={item.id} value={item.id}>{item.label}</option>
+                      ))}
+                    </select>
+                  </label>
                   {dataAdapter.isDemo && (
                     <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 font-medium text-amber-300">
                       Demo Mode
                     </span>
                   )}
+                  <span className="hidden md:inline-flex rounded-full border border-slate-700 bg-slate-800 px-2 py-1 text-slate-400">
+                    v{APP_VERSION}
+                  </span>
                   {currentUser && (
                     <span className="hidden sm:inline-flex rounded-full border border-slate-700 bg-slate-800 px-2 py-1 text-slate-300">
                       {currentUser.name} · {currentUser.permissionLevel}
@@ -563,7 +590,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => void handleLogout()}
-                      className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-slate-300 hover:bg-slate-700"
+                      className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-slate-300 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
                     >
                       <LogOut className="w-3 h-3" /> Logout
                     </button>
@@ -588,7 +615,7 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() => void restoreDemoData()}
-                          className="mt-3 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700"
+                          className="mt-3 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
                         >
                           Restore Demo Data
                         </button>

@@ -31,6 +31,7 @@ export default function ExportCenter({ state, isDemoMode, onRestoreDemoData, onA
   const { toast } = useToast();
   const [selectedRoomId, setSelectedRoomId] = useState(state.rooms[0]?.id ?? '');
   const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
   const [importPreview, setImportPreview] = useState<RoomPacketImportPreview | null>(null);
   const [importRawJson, setImportRawJson] = useState('');
   const [isServerExporting, setIsServerExporting] = useState(false);
@@ -148,6 +149,11 @@ export default function ExportCenter({ state, isDemoMode, onRestoreDemoData, onA
     toast(`${preview.roomName} imported with ${mode === 'overwrite_room' ? 'room overwrite' : 'safe merge'} mode.`, 'success');
   }
 
+  function handleOverwriteConfirmed() {
+    handleApplyImport('overwrite_room');
+    setConfirmOverwrite(false);
+  }
+
   async function handleResetConfirmed() {
     if (!onRestoreDemoData) return;
     try {
@@ -192,6 +198,16 @@ export default function ExportCenter({ state, isDemoMode, onRestoreDemoData, onA
           confirmDanger
           onConfirm={handleResetConfirmed}
           onCancel={() => setConfirmReset(false)}
+        />
+      )}
+      {confirmOverwrite && importPreview && (
+        <ConfirmModal
+          title={`Overwrite ${importPreview.roomName}?`}
+          message="This will replace the matching room and its room-scoped scripts, versions, hint ladders, pronunciation terms, and acknowledgements with the validated import packet. Safe merge remains available if you do not want replacement. Records in other rooms are not touched."
+          confirmLabel="Overwrite room"
+          confirmDanger
+          onConfirm={handleOverwriteConfirmed}
+          onCancel={() => setConfirmOverwrite(false)}
         />
       )}
 
@@ -330,8 +346,8 @@ export default function ExportCenter({ state, isDemoMode, onRestoreDemoData, onA
                 <div className="text-xs text-slate-500">Duplicates: room {importPreview.duplicates.room ? 'yes' : 'no'} · records {importPreview.duplicates.scripts + importPreview.duplicates.scriptVersions + importPreview.duplicates.hintLadders + importPreview.duplicates.pronunciationTerms + importPreview.duplicates.acknowledgements}</div>
                 <div className="flex gap-2 flex-wrap">
                   <button onClick={() => handleApplyImport('merge')} disabled={!importPreview.valid} className="px-3 py-2 bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white rounded-lg text-xs font-medium">Safe Merge</button>
-                  <button onClick={() => handleApplyImport('overwrite_room')} disabled={!importPreview.valid} className="px-3 py-2 bg-amber-700 hover:bg-amber-600 disabled:opacity-40 text-white rounded-lg text-xs font-medium">Overwrite Room</button>
-                  <button onClick={() => { setImportPreview(null); setImportRawJson(''); }} className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs">Cancel</button>
+                  <button onClick={() => setConfirmOverwrite(true)} disabled={!importPreview.valid} className="px-3 py-2 bg-amber-700 hover:bg-amber-600 disabled:opacity-40 text-white rounded-lg text-xs font-medium" aria-label={`Confirm overwrite import for ${importPreview.roomName}`}>Overwrite Room</button>
+                  <button onClick={() => { setImportPreview(null); setImportRawJson(''); setConfirmOverwrite(false); }} className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs">Cancel</button>
                 </div>
               </div>
             )}

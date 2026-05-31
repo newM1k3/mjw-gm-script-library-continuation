@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Plus, CreditCard as Edit2, Save, X, Volume2, AlertTriangle, Archive, Search, ExternalLink } from 'lucide-react';
 import { AppState, PronunciationTerm } from '../types';
 import { useToast } from '../lib/useToast';
+import ConfirmModal from './ConfirmModal';
 
 interface Props {
   state: AppState;
@@ -31,6 +32,7 @@ export default function PronunciationGuide({ state, onAddTerm, onUpdateTerm }: P
   const [form, setForm] = useState(emptyTerm(state.rooms[0]?.id ?? ''));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [pendingArchiveTerm, setPendingArchiveTerm] = useState<PronunciationTerm | null>(null);
 
   const filteredTerms = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -88,10 +90,15 @@ export default function PronunciationGuide({ state, onAddTerm, onUpdateTerm }: P
     setEditing(null); setErrors({}); setSaving(false);
   }
 
-  function handleArchive(term: PronunciationTerm) {
-    if (!window.confirm(`Archive pronunciation term "${term.term}"? It will be hidden from GM Mode but retained in operational records.`)) return;
-    onUpdateTerm({ ...term, deliveryNote: `[ARCHIVED] ${cleanArchiveMarker(term.deliveryNote)}`.trim(), updatedAt: new Date().toISOString() });
-    toast(`Pronunciation term "${term.term}" archived`);
+  function requestArchive(term: PronunciationTerm) {
+    setPendingArchiveTerm(term);
+  }
+
+  function confirmArchive() {
+    if (!pendingArchiveTerm) return;
+    onUpdateTerm({ ...pendingArchiveTerm, deliveryNote: `[ARCHIVED] ${cleanArchiveMarker(pendingArchiveTerm.deliveryNote)}`.trim(), updatedAt: new Date().toISOString() });
+    toast(`Pronunciation term "${pendingArchiveTerm.term}" archived`);
+    setPendingArchiveTerm(null);
   }
 
   function renderForm(onSave: () => void) {
@@ -190,9 +197,9 @@ export default function PronunciationGuide({ state, onAddTerm, onUpdateTerm }: P
                       </div>
                       <p className="text-xs text-slate-500 mt-0.5">{room?.name}</p>
                     </div>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity">
                       <button onClick={() => handleEdit(term)} className="p-1.5 text-slate-500 hover:text-slate-200 hover:bg-slate-700 rounded-lg transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-                      {!archived && <button onClick={() => handleArchive(term)} className="p-1.5 text-slate-500 hover:text-red-300 hover:bg-red-950/40 rounded-lg transition-colors"><Archive className="w-3.5 h-3.5" /></button>}
+                      {!archived && <button onClick={() => requestArchive(term)} className="p-1.5 text-slate-500 hover:text-red-300 hover:bg-red-950/40 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-400" aria-label={`Archive pronunciation term ${term.term}`}><Archive className="w-3.5 h-3.5" /></button>}
                     </div>
                   </div>
                   {term.meaning && <p className="text-sm text-slate-300 mt-2">{term.meaning}</p>}
@@ -210,6 +217,17 @@ export default function PronunciationGuide({ state, onAddTerm, onUpdateTerm }: P
           );
         })}
       </div>
+
+      {pendingArchiveTerm && (
+        <ConfirmModal
+          title={`Archive ${pendingArchiveTerm.term}?`}
+          message="This pronunciation term will be hidden from GM Mode but retained in operational records, exports, and audit history."
+          confirmLabel="Archive term"
+          confirmDanger
+          onConfirm={confirmArchive}
+          onCancel={() => setPendingArchiveTerm(null)}
+        />
+      )}
 
       {filteredTerms.length === 0 && !adding && (
         <div className="flex flex-col items-center justify-center py-16 bg-slate-800/30 border border-dashed border-slate-700 rounded-xl">

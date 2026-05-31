@@ -1,74 +1,91 @@
 # MJW GM Script Library
 
-The **MJW GM Script Library** is a Vite, React, and TypeScript application for managing escape room game-master scripts, version history, hint ladders, pronunciation notes, staff acknowledgements, readiness checks, and exportable room packets. The current repository is stabilized as a frontend-first production handoff baseline. It keeps the existing UI behavior intact while adding a persistence adapter layer that can run in demo localStorage mode or production PocketBase mode.
+The **MJW GM Script Library** is a Vite, React, and TypeScript application for managing escape room game-master scripts, version history, hint ladders, pronunciation notes, staff acknowledgements, operational readiness, and exportable room packets. It supports a browser-based demo mode for local evaluation and a production PocketBase adapter for live operations. The application is designed for the MJW Personal App Platform pattern: a focused operations tool with clear release documentation, server-side integrations, and safe manager approval gates.
 
 ## Current Status
 
-This baseline runs as a static Vite application. Application data is accessed through `src/lib/dataAdapter.ts`, which preserves the current browser localStorage demo behavior and isolates all PocketBase SDK calls behind a production adapter. The built-in sample data can be restored from the Export Center when `VITE_DATA_MODE=demo`. PocketBase mode is wired for collection-based persistence, but the external PocketBase collections, authentication rules, and access policies still need to be created before production use.
+The app is now a feature-complete release candidate for GM script operations. Demo mode remains available through localStorage and sample data restore, while production mode is wired through `src/lib/dataAdapter.ts` and documented PocketBase collections. Netlify Functions provide server-side data export and AI-assisted rewriting so privileged keys are never exposed to the browser. Prompt 13 added final polish, accessible confirmation flows, quick navigation, app-version display, and release documentation.
 
-| Area | Current State | Production Next Step |
+| Area | Current State | Production Responsibility |
 |---|---|---|
-| Frontend | React and TypeScript static app | Continue feature work in small Bolt.new prompts after this baseline |
-| Persistence | Adapter layer with demo localStorage mode and isolated PocketBase mode | Create PocketBase collections, rules, and operational backup policy |
-| AI features | Not implemented in this baseline | Add Netlify Function wrapper for OpenAI or Gemini |
-| Deployment | Ready for Netlify static build via `netlify.toml` | Connect GitHub repo to Netlify and set environment variables |
-| Testing | Vitest logic tests, TypeScript, ESLint, and production build checks | Add component/integration coverage around backend workflows |
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS, responsive app shell, quick navigation, and version display | Keep UI changes small, tested, and consistent across screens |
+| Persistence | Demo localStorage mode plus PocketBase production adapter boundary | Create and maintain PocketBase collections, rules, backups, and operator accounts |
+| Readiness | Actionable readiness audit dashboard with issue categories, filters, remediation links, room checklists, metadata, and JSON/Markdown exports | Review audit issues before each operational rollout and after major script changes |
+| Import/Export | Schema-versioned exports using `gms_export_schema_version: "1.0.0"`, safe room-packet preview, merge, and overwrite flows | Preserve schema compatibility for downstream MJW tools and document breaking changes |
+| AI Rewrite | Netlify Function wrapper for OpenAI or Gemini, draft-only output, required-block preservation checks, before/after diff, and manager approval gate | Store provider API keys server-side only and review all generated drafts before approval |
+| Deployment | Netlify-ready build with serverless functions and production environment variable support | Configure Netlify, PocketBase, environment variables, smoke tests, and rollback plan |
+| Validation | Vitest, TypeScript, ESLint, and Vite production build scripts | Run all checks before every release commit |
 
 ## Local Development
 
-Install dependencies, run the development server, and verify the project before handing it to Bolt.new or Netlify.
+Install dependencies, run the development server, and validate changes before committing. The repository uses `pnpm` in the active development workflow.
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
-Use these commands before committing production changes.
+Run the full local verification suite before release or handoff.
 
 ```bash
-npm test
-npm run typecheck
-npm run lint
-npm run build
+pnpm test -- --run
+pnpm exec tsc --noEmit
+pnpm run lint
+pnpm build
 ```
 
 The local development server is provided by Vite. The production build output is written to `dist`.
 
+## Key Features
+
+The library centers on operational script control. Managers can maintain room records, edit scripts, preserve version history, manage hint ladders and pronunciation guides, assign staff acknowledgements, and run readiness checks before a room goes live. The GM-oriented data model keeps scripts, versions, hints, pronunciation terms, staff acknowledgements, and audit events in one coherent app state.
+
+The **Readiness Audit** identifies operational gaps across room, script, staff, hint, and pronunciation categories. It produces actionable remediation targets, room-level readiness checklists, duplicate suppression, orphan detection, audit metadata, and exportable reports.
+
+The **Export Center** publishes room packets, staff acknowledgement reports, readiness audit reports, full backups, and integration packets under schema version `1.0.0`. Room-packet imports are validated before application and support safe merge or confirmed room overwrite. Production full backups can be generated through the Netlify export function so server-side data is not dependent on stale browser state.
+
+The **AI Rewrite** workflow is intentionally conservative. Requests are sent only to a Netlify Function, using `AI_PROVIDER` with either OpenAI or Gemini credentials stored as server-side environment variables. Returned text is saved only as a draft, displayed with a before/after diff, checked for required safety and policy block preservation, and cannot bypass manager approval.
+
 ## Netlify Deployment
 
-This repository includes a `netlify.toml` file with the deployment baseline:
+This repository includes `netlify.toml` configured for Vite and Netlify Functions.
 
 ```toml
 [build]
   command = "npm run build"
   publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
 ```
 
-To deploy with Netlify, create a new Netlify site from the GitHub repository, use the `main` branch, and keep the detected build command as `npm run build` with the publish directory set to `dist`. The project is deployable as a static frontend in demo mode. For PocketBase mode, configure `VITE_DATA_MODE=pocketbase` and `VITE_POCKETBASE_URL` in Netlify after the external PocketBase collections and rules are ready.
+Create a Netlify site from the GitHub repository, use the `main` branch, keep the build command as `npm run build` or the Netlify-equivalent package-manager command, and publish `dist`. For demo deployments, set `VITE_DATA_MODE=demo`. For production deployments, set `VITE_DATA_MODE=pocketbase` and `VITE_POCKETBASE_URL` after the external PocketBase instance is configured.
 
 ## Environment Variables
 
-Copy `.env.example` to `.env.local` for local development if you need to test configuration-dependent work. Do not commit `.env.local` or any real secret values.
+Copy `.env.example` to `.env.local` for local configuration testing. Do not commit `.env.local`, service tokens, API keys, or production secrets.
 
 | Variable | Scope | Safe in Browser? | Purpose |
 |---|---:|---:|---|
 | `VITE_DATA_MODE` | Frontend | Yes | Selects `demo` localStorage mode or `pocketbase` production adapter mode |
 | `VITE_POCKETBASE_URL` | Frontend | Yes | Public URL of the PocketBase instance used when `VITE_DATA_MODE=pocketbase` |
 | `VITE_APP_ENV` | Frontend | Yes | Optional deployment label for development, preview, or production |
-| `AI_PROVIDER` | Netlify Function | No | Planned selector for `openai` or `gemini` server-side AI rewriting |
-| `OPENAI_API_KEY` | Netlify Function | No | Planned OpenAI key for server-side AI operations |
-| `GEMINI_API_KEY` | Netlify Function | No | Planned Gemini key for server-side AI operations |
-| `PB_SERVICE_URL` | Netlify Function | No | Optional future server-side PocketBase service URL |
-| `PB_SUPERUSER_TOKEN` | Netlify Function | No | Optional future PocketBase service/admin token; never expose client-side |
+| `AI_PROVIDER` | Netlify Function | No | Selects `openai` or `gemini` for server-side AI rewriting |
+| `OPENAI_API_KEY` | Netlify Function | No | OpenAI key used only by `netlify/functions/rewrite-script.ts` |
+| `OPENAI_MODEL` | Netlify Function | No | Optional OpenAI model override |
+| `GEMINI_API_KEY` | Netlify Function | No | Gemini key used only by `netlify/functions/rewrite-script.ts` |
+| `GEMINI_MODEL` | Netlify Function | No | Optional Gemini model override |
+| `PB_SERVICE_URL` | Netlify Function | No | PocketBase service URL for server-side production exports |
+| `PB_SUPERUSER_TOKEN` | Netlify Function | No | PocketBase service/admin token for server-side export only; never expose client-side |
 
-## Data Model Status
+## Documentation
 
-The TypeScript model in `src/types.ts` currently covers the core operational entities: rooms, scripts, script versions, hint ladders, pronunciation terms, staff members, acknowledgements, audit results, and app state. The adapter boundary preserves the existing `AppState` shape for components while mapping helpers allow backend records to evolve independently. For production, the external PocketBase schema still needs ownership fields, authentication rules, migration strategy, backup policy, and conflict-resolution behavior.
+Production setup and release verification are documented in `docs/release-checklist.md`. Export contracts, schema envelopes, import behavior, and downstream expectations are documented in `docs/export-schema.md`. PocketBase collection expectations and security notes are documented in `docs/pocketbase-schema.md`.
+
+## Data Model
+
+The TypeScript model in `src/types.ts` covers rooms, scripts, script versions, hint ladders, pronunciation terms, staff members, acknowledgements, audit events, readiness metadata, and app state. The adapter boundary preserves the component-facing `AppState` shape while allowing production records to be stored in PocketBase collections. AI rewrite provenance is stored on script versions so managers can audit generated drafts and approval decisions.
 
 ## Known Limitations
 
-The current application should be treated as a polished prototype and deployment baseline, not as a complete production operations system. Demo mode data remains local to the browser, while PocketBase mode requires external collections and access rules before it can be used operationally. There is no user authentication, role-based access control, cloud backup policy, email notification workflow, AI rewrite endpoint, or component-level integration test suite. The export functionality is useful for handoff packets, but external integrations with RoomReady Ops, Puzzle Flow Visualizer, LockMap Studio, and other MJW tools are still future work.
-
-## Recommended Next Prompts
-
-After this adapter-layer commit, continue in small, verifiable prompts. The next prompt should create and verify the external PocketBase collections, authentication rules, and seed/import workflow against `VITE_DATA_MODE=pocketbase`. A later prompt should add Netlify Functions for AI-assisted script rewriting, with all API keys stored only in Netlify server-side environment variables.
+Demo mode data remains local to the browser and should not be treated as a backup or production source of truth. PocketBase mode requires the external collections, access rules, users, backup policy, and operational monitoring described in the release checklist. AI-assisted rewriting depends on the configured provider and should be treated as drafting assistance only; required safety blocks must still be reviewed by a manager. The current automated tests focus on business logic, export contracts, audit logic, and serverless function behavior rather than exhaustive browser-level component coverage.

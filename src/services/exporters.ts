@@ -703,12 +703,15 @@ export function previewRoomPacketImport(rawJson: string, currentState: AppState)
 }
 
 function stripComputedScriptFields(script: Script & { currentVersion?: ScriptVersion | null }): Script {
-  const { currentVersion: _currentVersion, ...cleanScript } = script;
+  const cleanScript = { ...script };
+  delete cleanScript.currentVersion;
   return cleanScript;
 }
 
 function stripComputedAcknowledgementFields(acknowledgement: Acknowledgement & { staffName?: string; staffRole?: string }): Acknowledgement {
-  const { staffName: _staffName, staffRole: _staffRole, ...cleanAcknowledgement } = acknowledgement;
+  const cleanAcknowledgement = { ...acknowledgement };
+  delete cleanAcknowledgement.staffName;
+  delete cleanAcknowledgement.staffRole;
   return cleanAcknowledgement;
 }
 
