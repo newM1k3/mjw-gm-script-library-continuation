@@ -25,6 +25,42 @@ export type SpoilerLevel = 'low' | 'medium' | 'high';
 
 export type IssueSeverity = 'critical' | 'warning' | 'improvement';
 
+export type ReadinessIssueCategory = 'room' | 'script' | 'staff' | 'hint' | 'pronunciation';
+export type ReadinessIssueStatus = 'open' | 'resolved';
+export type RemediationScreen = 'rooms' | 'editor' | 'history' | 'hints' | 'pronunciation' | 'acknowledgements' | 'scripts';
+
+export interface ReadinessRemediationTarget {
+  screen: RemediationScreen;
+  label: string;
+  roomId?: string;
+  scriptId?: string;
+  staffId?: string;
+  hintLadderId?: string;
+  pronunciationTermId?: string;
+}
+
+export interface RoomReadinessChecklistItem {
+  id: string;
+  label: string;
+  description: string;
+  complete: boolean;
+  category: ReadinessIssueCategory;
+}
+
+export interface ReadinessAuditFilters {
+  severity?: IssueSeverity | 'all';
+  roomId?: string | 'all';
+  category?: ReadinessIssueCategory | 'all';
+  status?: ReadinessIssueStatus | 'all';
+}
+
+export interface ReadinessAuditMetadata {
+  generatedAt: string;
+  dataSource: 'demo' | 'pocketbase' | 'local';
+  roomCount: number;
+  issueCount: number;
+}
+
 export type StaffPermissionLevel = 'owner' | 'manager' | 'lead_gm' | 'gm' | 'trainee' | 'viewer';
 
 export type AcknowledgementSource = 'gm_mode' | 'staff_training' | 'manager_review' | 'import' | 'manual';
@@ -219,9 +255,13 @@ export interface ScriptReadinessIssue {
   id: string;
   roomId: string;
   severity: IssueSeverity;
-  category: string;
+  category: ReadinessIssueCategory;
+  status: ReadinessIssueStatus;
+  title: string;
   description: string;
   recommendation: string;
+  remediation: ReadinessRemediationTarget;
+  dedupeKey: string;
 }
 
 export interface ScriptReadinessResult {
@@ -231,7 +271,9 @@ export interface ScriptReadinessResult {
   criticalCount: number;
   warningCount: number;
   improvementCount: number;
+  checklist: RoomReadinessChecklistItem[];
   generatedAt: string;
+  dataSource: 'demo' | 'pocketbase' | 'local';
 }
 
 export interface AppState {

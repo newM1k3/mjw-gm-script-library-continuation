@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { runAllAudits, runAudit } from './scriptAudit';
-import type { AppState, HintLadder, Room, Script, ScriptVersion } from '../types';
+import { generateRoomChecklist, runAllAudits, runAudit, runGlobalAuditIssues } from './scriptAudit';
+import type { AppState, HintLadder, Room, Script, ScriptReadinessIssue, ScriptVersion } from '../types';
 
 const baseDate = '2026-01-01T00:00:00.000Z';
 const currentDate = '2026-01-02T00:00:00.000Z';
@@ -146,34 +146,58 @@ function readyState(overrides: Partial<AppState> = {}): AppState {
   return { ...state, ...overrides };
 }
 
-function issueDescriptions(state: AppState): string[] {
-  return runAudit(state, state.rooms[0]).issues.map((issue) => issue.description);
+function firstIssue(state: AppState, predicate: (issue: ScriptReadinessIssue) => boolean): ScriptReadinessIssue {
+  const issue = runAudit(state, state.rooms[0]).issues.find(predicate);
+  if (!issue) throw new Error('Expected audit issue was not generated.');
+  return issue;
 }
 
 describe('script readiness audits', () => {
+  it('returns no issues and a full score for a ready room', () => {
+    const result = runAudit(readyState(), readyState().rooms[0], 'demo');
+
+    expect(result.score).toBe(100);
+    expect(result.issues).toHaveLength(0);
+    expect(result.dataSource).toBe('demo');
+    expect(Date.parse(result.generatedAt)).not.toBeNaN();
+  });
+
   it('flags an active room that is missing a current pre-game briefing', () => {
     const state = readyState({ scripts: readyState().scripts.filter((item) => item.scriptType !== 'pre_game_brief') });
+    const issue = firstIssue(state, (candidate) => candidate.title === 'Missing current pre-game brief');
 
-    expect(issueDescriptions(state)).toContain('Active room "Clockwork Vault" has no current pre-game briefing.');
+    expect(issue.description).toBe('Active room "Clockwork Vault" has no current pre-game briefing.');
+    expect(issue.severity).toBe('critical');
+    expect(issue.category).toBe('script');
+    expect(issue.remediation.screen).toBe('editor');
   });
 
   it('flags an active room that is missing a current safety briefing', () => {
     const state = readyState({ scripts: readyState().scripts.filter((item) => item.scriptType !== 'safety_brief') });
+    const issue = firstIssue(state, (candidate) => candidate.title === 'Missing current safety brief');
 
-    expect(issueDescriptions(state)).toContain('Active room "Clockwork Vault" has no current safety briefing.');
+    expect(issue.description).toBe('Active room "Clockwork Vault" has no current safety briefing.');
+    expect(issue.severity).toBe('critical');
+    expect(issue.category).toBe('script');
+    expect(issue.remediation.label).toBe('Create safety brief');
   });
 
   it('flags an active room with no hint ladder coverage', () => {
-    const state = readyState({ hintLadders: [] });
+    const issue = firstIssue(readyState({ hintLadders: [] }), (candidate) => candidate.title === 'Missing hint ladder coverage');
 
-    expect(issueDescriptions(state)).toContain('Active room "Clockwork Vault" has no hint ladders.');
+    expect(issue.description).toBe('Active room "Clockwork Vault" has no active hint ladders.');
+    expect(issue.severity).toBe('warning');
+    expect(issue.category).toBe('hint');
+    expect(issue.remediation.screen).toBe('hints');
   });
 
   it('flags a script that has no current approved version', () => {
     const noCurrentScript = script({ id: 'training-script', title: 'Training Note', scriptType: 'training_note', currentVersionId: null });
-    const state = readyState({ scripts: [...readyState().scripts, noCurrentScript] });
+    const issue = firstIssue(readyState({ scripts: [...readyState().scripts, noCurrentScript] }), (candidate) => candidate.title === 'Script has no current version');
 
-    expect(issueDescriptions(state)).toContain('Script "Training Note" has no current approved version.');
+    expect(issue.description).toBe('Script "Training Note" has no current approved version.');
+    expect(issue.category).toBe('script');
+    expect(issue.remediation.scriptId).toBe('training-script');
   });
 
   it('flags staff who acknowledged an older script version but not the current one', () => {
@@ -194,8 +218,12 @@ describe('script readiness audits', () => {
         },
       ],
     });
+    const issue = firstIssue(state, (candidate) => candidate.title === 'Outdated staff acknowledgement');
 
-    expect(issueDescriptions(state)).toContain('Jordan GM acknowledged an older version of "Pre-Game Briefing" but not the current version.');
+    expect(issue.description).toBe('Jordan GM acknowledged an older version of "Pre-Game Briefing" but not the current version.');
+    expect(issue.category).toBe('staff');
+    expect(issue.remediation.screen).toBe('acknowledgements');
+    expect(issue.remediation.staffId).toBe('staff-1');
   });
 
   it('flags a newer draft waiting behind the current approved script', () => {
@@ -213,37 +241,80 @@ describe('script readiness audits', () => {
         }),
       ],
     });
+    const issue = firstIssue(state, (candidate) => candidate.title === 'Pending newer version');
 
-    expect(issueDescriptions(state)).toContain('Script "Pre-Game Briefing" has a draft version (v1.1) newer than the current approved version.');
+    expect(issue.description).toBe('Script "Pre-Game Briefing" has v1.1 newer than the current approved version.');
+    expect(issue.severity).toBe('improvement');
+    expect(issue.remediation.screen).toBe('history');
   });
 
   it('flags pronunciation terms that lack phonetic spelling', () => {
-    const state = readyState({
-      pronunciationTerms: [{ ...readyState().pronunciationTerms[0], phonetic: '   ' }],
-    });
+    const issue = firstIssue(readyState({ pronunciationTerms: [{ ...readyState().pronunciationTerms[0], phonetic: '   ' }] }), (candidate) => candidate.title === 'Pronunciation term missing phonetic spelling');
 
-    expect(issueDescriptions(state)).toContain('Term "Aethelred" is missing a phonetic spelling.');
+    expect(issue.description).toBe('Term "Aethelred" is missing a phonetic spelling.');
+    expect(issue.category).toBe('pronunciation');
+    expect(issue.remediation.pronunciationTermId).toBe('term-1');
   });
 
   it('flags a hint ladder that jumps directly to high-spoiler guidance', () => {
-    const state = readyState({
-      hintLadders: [hintLadder({ hints: [{ level: 1, text: 'The full answer is 1847.', spoilerLevel: 'high' }] })],
-    });
+    const issue = firstIssue(readyState({ hintLadders: [hintLadder({ hints: [{ level: 1, text: 'The full answer is 1847.', spoilerLevel: 'high' }] })] }), (candidate) => candidate.title === 'Hint ladder jumps to high-spoiler hints');
 
-    expect(issueDescriptions(state)).toContain('Hint ladder "Gear Cabinet" jumps straight to high-spoiler hints with no low or medium hints.');
+    expect(issue.description).toBe('Hint ladder "Gear Cabinet" jumps straight to high-spoiler hints with no low or medium hints.');
+    expect(issue.category).toBe('hint');
+    expect(issue.remediation.hintLadderId).toBe('hint-1');
   });
 
-  it('flags scripts that are not attached to any existing room', () => {
+  it('flags scripts that are not attached to any existing room as global issues only', () => {
     const orphanScript = script({ id: 'orphan-script', roomId: 'missing-room', title: 'Floating Script' });
     const state = readyState({ scripts: [...readyState().scripts, orphanScript] });
 
-    expect(issueDescriptions(state)).toContain('Script "Floating Script" is not attached to any room.');
+    expect(runAudit(state, state.rooms[0]).issues.map((issue) => issue.description)).not.toContain('Script "Floating Script" is not attached to any room.');
+    const globalIssue = runGlobalAuditIssues(state)[0];
+    expect(globalIssue.description).toBe('Script "Floating Script" is not attached to any room.');
+    expect(globalIssue.roomId).toBe('global');
+    expect(globalIssue.category).toBe('script');
   });
 
   it('flags an operational risk when no active staff have acknowledged current scripts', () => {
-    const state = readyState({ acknowledgements: [] });
+    const issue = firstIssue(readyState({ acknowledgements: [] }), (candidate) => candidate.title === 'No current script acknowledgements');
 
-    expect(issueDescriptions(state)).toContain('No active staff have acknowledged any current script versions for "Clockwork Vault".');
+    expect(issue.description).toBe('No active staff have acknowledged any current script versions for "Clockwork Vault".');
+    expect(issue.severity).toBe('warning');
+    expect(issue.category).toBe('staff');
+  });
+
+  it('deduplicates issues that share a deterministic rule key', () => {
+    const state = readyState({
+      hintLadders: [
+        hintLadder({ id: 'hint-1', hints: [{ level: 1, text: 'Answer A.', spoilerLevel: 'high' }] }),
+        hintLadder({ id: 'hint-1', hints: [{ level: 1, text: 'Answer A duplicate.', spoilerLevel: 'high' }] }),
+      ],
+    });
+
+    const highOnlyIssues = runAudit(state, state.rooms[0]).issues.filter((issue) => issue.dedupeKey === 'room-1:hint:hint-1:high-only');
+    expect(highOnlyIssues).toHaveLength(1);
+  });
+
+  it('calculates scoring penalties by severity', () => {
+    const state = readyState({
+      scripts: [],
+      hintLadders: [],
+      pronunciationTerms: [{ ...readyState().pronunciationTerms[0], phonetic: '' }],
+      acknowledgements: [],
+    });
+
+    const result = runAudit(state, state.rooms[0]);
+    expect(result.criticalCount).toBe(2);
+    expect(result.warningCount).toBe(1);
+    expect(result.improvementCount).toBe(1);
+    expect(result.score).toBe(49);
+  });
+
+  it('generates a room readiness checklist with category coverage', () => {
+    const checklist = generateRoomChecklist(readyState({ hintLadders: [] }), readyState().rooms[0]);
+
+    expect(checklist.map((item) => item.category)).toEqual(['room', 'script', 'script', 'hint', 'staff', 'pronunciation']);
+    expect(checklist.find((item) => item.id === 'room-1_hints_available')?.complete).toBe(false);
   });
 
   it('keeps issue IDs unique across rooms when all rooms are audited together', () => {

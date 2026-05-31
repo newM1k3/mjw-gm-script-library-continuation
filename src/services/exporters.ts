@@ -1,6 +1,6 @@
 import { AcknowledgementReportFilters, AppState, ScriptReadinessResult } from '../types';
 import { buildAcknowledgementReportRows, acknowledgementStatusLabels, formatApprovalDate } from '../lib/acknowledgements';
-import { runAudit } from '../lib/scriptAudit';
+import { runAllAudits, runAudit, runGlobalAuditIssues } from '../lib/scriptAudit';
 
 export function exportRoomJSON(state: AppState, roomId: string): string {
   const room = state.rooms.find((r) => r.id === roomId);
@@ -287,6 +287,117 @@ export function exportAcknowledgementReportMarkdown(state: AppState, filters: Ac
     lines.push(`> ${row.acknowledgementTextSnapshot}`);
     lines.push('');
   });
+
+  return lines.join('\n');
+}
+
+export function exportReadinessJSON(
+  state: AppState,
+  auditResults: ScriptReadinessResult[] = runAllAudits(state),
+  globalIssues = runGlobalAuditIssues(state)
+): string {
+  const allIssues = [...auditResults.flatMap((result) => result.issues), ...globalIssues];
+  const payload = {
+    version: '1.0',
+    sourceApp: 'GM Script Library',
+    reportType: 'readiness_audit',
+    exportedAt: new Date().toISOString(),
+    metadata: {
+      generatedAt: auditResults[0]?.generatedAt ?? new Date().toISOString(),
+      dataSource: auditResults[0]?.dataSource ?? 'local',
+      roomCount: state.rooms.length,
+      issueCount: allIssues.length,
+    },
+    summary: {
+      averageScore: auditResults.length > 0 ? Math.round(auditResults.reduce((sum, result) => sum + result.score, 0) / auditResults.length) : 100,
+      critical: allIssues.filter((issue) => issue.severity === 'critical').length,
+      warnings: allIssues.filter((issue) => issue.severity === 'warning').length,
+      improvements: allIssues.filter((issue) => issue.severity === 'improvement').length,
+      open: allIssues.filter((issue) => issue.status === 'open').length,
+    },
+    rooms: auditResults.map((result) => ({
+      room: state.rooms.find((room) => room.id === result.roomId) ?? null,
+      score: result.score,
+      issueCounts: {
+        critical: result.criticalCount,
+        warnings: result.warningCount,
+        improvements: result.improvementCount,
+      },
+      checklist: result.checklist,
+      issues: result.issues,
+    })),
+    globalIssues,
+  };
+
+  return JSON.stringify(payload, null, 2);
+}
+
+export function exportReadinessMarkdown(
+  state: AppState,
+  auditResults: ScriptReadinessResult[] = runAllAudits(state),
+  globalIssues = runGlobalAuditIssues(state)
+): string {
+  const allIssues = [...auditResults.flatMap((result) => result.issues), ...globalIssues];
+  const averageScore = auditResults.length > 0 ? Math.round(auditResults.reduce((sum, result) => sum + result.score, 0) / auditResults.length) : 100;
+  const lines: string[] = [];
+
+  lines.push('# GM Script Library — Readiness Audit Report');
+  lines.push(`**Exported:** ${new Date().toLocaleString()}`);
+  lines.push(`**Generated:** ${auditResults[0]?.generatedAt ? new Date(auditResults[0].generatedAt).toLocaleString() : new Date().toLocaleString()}`);
+  lines.push(`**Data Source:** ${auditResults[0]?.dataSource ?? 'local'}`);
+  lines.push(`**Average Score:** ${averageScore}/100`);
+  lines.push('');
+  lines.push('## Summary');
+  lines.push('');
+  lines.push('| Metric | Count |');
+  lines.push('| --- | ---: |');
+  lines.push(`| Rooms Audited | ${auditResults.length} |`);
+  lines.push(`| Critical Issues | ${allIssues.filter((issue) => issue.severity === 'critical').length} |`);
+  lines.push(`| Warnings | ${allIssues.filter((issue) => issue.severity === 'warning').length} |`);
+  lines.push(`| Improvements | ${allIssues.filter((issue) => issue.severity === 'improvement').length} |`);
+  lines.push(`| Total Open Issues | ${allIssues.filter((issue) => issue.status === 'open').length} |`);
+  lines.push('');
+
+  if (globalIssues.length > 0) {
+    lines.push('## Global Library Issues');
+    lines.push('');
+    lines.push('| Severity | Category | Issue | Remediation |');
+    lines.push('| --- | --- | --- | --- |');
+    globalIssues.forEach((issue) => {
+      lines.push(`| ${issue.severity} | ${issue.category} | ${issue.description} | ${issue.recommendation} |`);
+    });
+    lines.push('');
+  }
+
+  lines.push('## Room Results');
+  lines.push('');
+  auditResults.forEach((result) => {
+    const room = state.rooms.find((candidate) => candidate.id === result.roomId);
+    lines.push(`### ${room?.name ?? result.roomId} — ${result.score}/100`);
+    lines.push('');
+    lines.push('| Severity | Category | Status | Issue | Fix | Action |');
+    lines.push('| --- | --- | --- | --- | --- | --- |');
+    if (result.issues.length === 0) {
+      lines.push('| — | — | resolved | All checks passed. | Continue periodic review. | No action needed |');
+    } else {
+      result.issues.forEach((issue) => {
+        lines.push(`| ${issue.severity} | ${issue.category} | ${issue.status} | ${issue.description} | ${issue.recommendation} | ${issue.remediation.label} |`);
+      });
+    }
+    lines.push('');
+    lines.push('#### Checklist');
+    lines.push('');
+    lines.push('| Item | Category | Complete | Notes |');
+    lines.push('| --- | --- | --- | --- |');
+    result.checklist.forEach((item) => {
+      lines.push(`| ${item.label} | ${item.category} | ${item.complete ? 'Yes' : 'No'} | ${item.description} |`);
+    });
+    lines.push('');
+  });
+
+  lines.push('---');
+  lines.push('');
+  lines.push('*Generated by GM Script Library · MJW Personal App Platform*');
 
   return lines.join('\n');
 }

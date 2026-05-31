@@ -646,7 +646,7 @@ export default function App() {
                     />
                   )}
                   {screen === 'audit' && (
-                    <ReadinessAudit state={state} />
+                    <ReadinessAudit state={state} onNavigate={navigate} />
                   )}
                   {screen === 'export' && (
                     canManage ? (
